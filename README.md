@@ -87,11 +87,25 @@ month it closed, newest first: a new month's file gets a heading, an existing on
 `Recently closed` section left empty says `*None.*`. Nothing is deleted. With `[git]`, the files it changed (and only
 those) are committed and, if asked, pushed.
 
+## Sharing settings with other tools: `base`
+
+Several tools built on the shared library can keep their common settings in one file, named at the top of each
+tool's settings: `base = "base-config.toml"` (relative to the settings file). Then:
+
+- **the base's `[paths]` are variables** for this tool's paths, looked up before the environment: with
+  `EA_LOCAL = "%LOCALAPPDATA%/claude-ea"` there, `log_file = "%EA_LOCAL%/md-inbox.log"` works here;
+- **its other settings that md-inbox knows and this file doesn't set are used** (a base's sign-in settings, which
+  md-inbox doesn't have, are left out);
+- **a table such as `[git]` applies only if this file has that section too**, even empty, its own keys winning.
+
+The loader is background-tools-lib's `PyCompat.BaseSettings`.
+
 ## Settings
 
 `%APPDATA%\md-inbox\config.toml` by default (`--config` or `MD_INBOX_CONFIG` for another).
 
 ```toml
+base = "base-config.toml"   # optional: settings shared with other tools
 folder = "inbox"                    # the lists: every *.md directly in it (relative to this file)
 closed_heading = "Recently closed"
 keep_days = 14

@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using PyCompat;
 using RepoCommit;
+using Tomlyn;
 using Tomlyn.Model;
 
 namespace MdInbox;
@@ -33,6 +34,7 @@ public sealed partial class Config
     // Explicit "\n" (a raw literal would take the .cs file's line endings), written with CRLF.
     public const string Template =
         "# md-inbox settings. See the README.\n" +
+        "# base = \"base-config.toml\"          # settings shared with other tools\n" +
         "folder = \"inbox\"                    # the lists: every *.md directly in it (relative to this file)\n" +
         "# closed_heading = \"Recently closed\"\n" +
         "# keep_days = 14\n" +
@@ -45,8 +47,11 @@ public sealed partial class Config
         "# repo = \".\"\n" +
         "# push = true\n";
 
-    private static readonly string[] TopKeys =
+    /// <summary>Every top-level setting: the strict check's list, and what a base file may supply.</summary>
+    public static readonly string[] KnownKeys =
         ["folder", "closed_heading", "keep_days", "archive_folder", "skip_sections", "due_ahead_days", "daily_at", "log_file", "git"];
+
+    private static readonly string[] TopKeys = KnownKeys;
 
     public required string Path { get; init; }
     public required string Folder { get; init; }
@@ -92,7 +97,17 @@ public sealed partial class Config
             var text = PyStr.ReadText(full);
             if (text.StartsWith('﻿'))
                 text = text[1..];
-            raw = PyToml.Read(text, full);
+            var read = BaseSettings.Read(text, full, env, KnownKeys);
+            raw = read.Raw;
+            env = read.Env;   // the base's [paths], then the environment
+        }
+        catch (TomlException error)
+        {
+            throw new UsageException($"{full}: {error.Message.TrimEnd()}");
+        }
+        catch (FormatException error)   // the base file: the message names it
+        {
+            throw new UsageException(error.Message.TrimEnd());
         }
         catch (Exception error) when (error is not (IOException or UnauthorizedAccessException or UsageException))
         {
