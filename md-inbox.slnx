@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="src/MdInbox/MdInbox.csproj" />
+  <Project Path="src/MdInbox.Console/MdInbox.Console.csproj" />
+  <Project Path="src/MdInbox.Background/MdInbox.Background.csproj" />
+
+  <Project Path="tests/MdInbox.Tests/MdInbox.Tests.csproj" />
+</Solution>

@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>md-inbox</AssemblyName>
+    <RootNamespace>MdInbox</RootNamespace>
+    <PublishAot>true</PublishAot>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\MdInbox\MdInbox.csproj" />
+  </ItemGroup>
+</Project>
