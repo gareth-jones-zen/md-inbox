@@ -24,18 +24,27 @@ public static class Cli
     public const string BackgroundExe = "md-inbox-background.exe";
 
     private const string Usage =
-        "usage: md-inbox [-h] [--version] [--config CONFIG] {config,list,show,due,archive,autostart} ...";
+        "usage: md-inbox [-h] [--version] [--config CONFIG] {config,list,show,due,add,close,redate,archive,autostart} ...";
 
     // Explicit "\n" throughout (a raw literal would take the .cs file's line endings).
     public const string Help =
         Usage + "\n\n" +
-        "md-inbox: lists of items kept in markdown files: what's open, what's due, and closed items archived by month.\n\n" +
+        "md-inbox: lists of items kept in markdown files: what's open, what's due, adding and closing items, and closed\n" +
+        "items archived by month.\n\n" +
         "    md-inbox list [LIST...]          the open items, numbered, under their sections (all lists if none named)\n" +
         "        --section S                  only sections whose heading contains S\n" +
         "        --tag T                      only items whose [tag] contains T\n" +
         "        --closed                     the closed items waiting for the archive instead\n" +
         "    md-inbox show LIST N             an item in full (N from `list`; cN for a closed one)\n" +
         "    md-inbox due [--days N]          dated items due within N days (default: the settings' due_ahead_days)\n" +
+        "    md-inbox add [LIST] TEXT         add an item at the top of its section, dated today: \"[Tag] Headline. Detail\"\n" +
+        "        --file F                     the item from a markdown file instead (later lines go under it)\n" +
+        "        --section S                  the section (a few letters of it); else the tag's, from [tags]\n" +
+        "        --date DATE                  the date it was raised (default today)\n" +
+        "    md-inbox close LIST N --reason R move an item to the closed section: \"Closed (date): R.\" in front\n" +
+        "    md-inbox redate LIST N DATE      move the date in an item's tag (\"[Waiting: Ann, 20 Nov 2026]\")\n" +
+        "        --note T                     and add \"**18 Nov: T.** Next: <date>.\" under it\n" +
+        "      add, close, redate: --dry-run shows it and changes nothing; --no-commit skips [git]\n" +
         "    md-inbox archive [--dry-run]     move closed items past keep_days to the archive, and commit them\n" +
         "    md-inbox autostart on            run the archive daily and at logon (off, restart, status)\n" +
         "    md-inbox config                  create the settings file (if missing) and say where it is\n\n" +
@@ -45,19 +54,19 @@ public static class Cli
         "  --version        show program's version number and exit\n" +
         "  --config CONFIG  settings file (default %APPDATA%\\md-inbox\\config.toml)\n";
 
-    private static readonly string[] Commands = ["config", "list", "show", "due", "archive", "autostart"];
+    private static readonly string[] Commands = ["config", "list", "show", "due", "add", "close", "redate", "archive", "autostart"];
 
     public static string Version =>
         typeof(Cli).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
     internal sealed class Options
     {
-        public string? Config, Section, Tag;
+        public string? Config, Section, Tag, File, Reason, Note;
         public string Command = "";
         public List<string> Args = [];
-        public bool Closed, DryRun;
+        public bool Closed, DryRun, NoCommit;
         public int? Days;
-        public DateOnly? AsOf;
+        public DateOnly? AsOf, Raised;
     }
 
     private sealed class ArgumentsException(string message) : Exception(message);
@@ -93,6 +102,9 @@ public static class Cli
                 "list" => List(config, options, host),
                 "show" => Show(config, options, host),
                 "due" => DueCommand(config, options, host),
+                "add" => AddCommand(config, options, host),
+                "close" => CloseCommand(config, options, host),
+                "redate" => RedateCommand(config, options, host),
                 "archive" => ArchiveCommand(config, options, host),
                 _ => Autostart(config, options.Args[0], host),
             };
@@ -169,6 +181,79 @@ public static class Cli
                 : "";
             host.Out.WriteLine($"{d.When:ddd dd MMM}  {when}{d.Item.List} {d.Item.Number}: {tag}{d.Item.Title}{who}");
         }
+        return 0;
+    }
+
+    private static int AddCommand(Config config, Options options, CliHost host)
+    {
+        string text;
+        string? listName;
+        if (options.File is { } file)
+        {
+            if (options.Args.Count > 1)
+                throw new UsageException("With --file, give at most the list.");
+            text = File.ReadAllText(file);
+            listName = options.Args.Count == 1 ? options.Args[0] : null;
+        }
+        else
+        {
+            if (options.Args.Count == 0)
+                throw new UsageException("Give the item's text (or --file).");
+            text = options.Args[^1];
+            listName = options.Args.Count == 2 ? options.Args[0] : null;
+        }
+        var item = Inbox.Format(text, options.Raised ?? host.Today());
+        var (list, section) = Inbox.Place(config, listName, options.Section, Inbox.TagOf(item));
+        var done = Inbox.Add(config, list, section, item, options.DryRun);
+        return Report(config, options, host, done, $"{(options.DryRun ? "Would add" : "Added")} to {done.List} / {done.Section}",
+            $"Inbox: add to {done.List}: {Short(done)}");
+    }
+
+    private static int CloseCommand(Config config, Options options, CliHost host)
+    {
+        var list = Inbox.List(config, options.Args[0]);
+        var done = Inbox.Close(config, list, Number(options.Args[1]), options.Reason ?? throw new UsageException("Say why it's closed: --reason \"...\"."),
+            options.Raised ?? host.Today(), options.DryRun);
+        return Report(config, options, host, done, $"{(options.DryRun ? "Would close" : "Closed")} {list.Name} {options.Args[1]}",
+            $"Inbox: close in {done.List}: {Short(done)}");
+    }
+
+    private static int RedateCommand(Config config, Options options, CliHost host)
+    {
+        var list = Inbox.List(config, options.Args[0]);
+        var when = Inbox.ParseDate(options.Args[2]) ?? throw new UsageException($"'{options.Args[2]}' isn't a date (yyyy-mm-dd, or 20 Nov 2026).");
+        var done = Inbox.Redate(config, list, Number(options.Args[1]), when, options.Note, host.Today(), options.DryRun);
+        return Report(config, options, host, done, $"{(options.DryRun ? "Would move" : "Moved")} {list.Name} {options.Args[1]} to {when:ddd d MMM}",
+            $"Inbox: {done.List}: next date {when:d MMM} for {Short(done)}");
+    }
+
+    private static int Number(string text) =>
+        int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var n) ? n
+            : throw new UsageException($"'{text}' isn't an item number (take it from a fresh `list`).");
+
+    private static string Short(Inbox.Edited done)
+    {
+        var title = new Item(done.List, done.Section, 0, 0, done.Lines.Count, done.Lines, done.Lines[0].StartsWith("- ✔", StringComparison.Ordinal)).Title;
+        return title.Length > 60 ? title[..57].TrimEnd() + "..." : title;
+    }
+
+    /// <summary>Shows what an edit did, logs it, and commits the list's file when the settings have [git].</summary>
+    private static int Report(Config config, Options options, CliHost host, Inbox.Edited done, string what, string message)
+    {
+        host.Out.Write($"{what}:\n\n{done.Text}\n\n");
+        if (options.DryRun)
+            return 0;
+        Logger.Create(config.LogFile, TextWriter.Null, stampEcho: false)($"{what}: {Short(done)}");
+        if (options.NoCommit || config.Git is not { Commit: true } git)
+            return 0;
+        var log = Logger.Create(config.LogFile, host.Out, stampEcho: false);
+        var committed = git.Open(log).Commit(message, [done.Path], trailers: git.Trailers, push: git.Push);
+        if (committed.Error is { } error)
+        {
+            log($"commit failed: {error}");
+            return 1;
+        }
+        log(committed.Committed ? $"committed {committed.Commit}{(git.Push ? committed.Pushed ? ", pushed" : $", push failed: {committed.PushError}" : "")}" : "nothing to commit");
         return 0;
     }
 
@@ -301,8 +386,27 @@ public static class Cli
                 case ("list", "--closed"):
                     options.Closed = true;
                     break;
-                case ("archive", "--dry-run"):
+                case ("archive" or "add" or "close" or "redate", "--dry-run"):
                     options.DryRun = true;
+                    break;
+                case ("add" or "close" or "redate", "--no-commit"):
+                    options.NoCommit = true;
+                    break;
+                case ("add", "--section"):
+                    options.Section = Value(name, ref i, arg);
+                    break;
+                case ("add", "--file"):
+                    options.File = Value(name, ref i, arg);
+                    break;
+                case ("close", "--reason"):
+                    options.Reason = Value(name, ref i, arg);
+                    break;
+                case ("redate", "--note"):
+                    options.Note = Value(name, ref i, arg);
+                    break;
+                case ("add" or "close", "--date"):
+                    var raised = Value(name, ref i, arg);
+                    options.Raised = Inbox.ParseDate(raised) ?? throw new ArgumentsException($"argument --date: expected a date (yyyy-mm-dd), not '{raised}'");
                     break;
                 case ("archive" or "due", "--as-of"):
                     var day = Value(name, ref i, arg);
@@ -326,6 +430,9 @@ public static class Cli
         var (min, max, what) = options.Command switch
         {
             "show" => (2, 2, "list, number"),
+            "add" => (0, 2, ""),
+            "close" => (2, 2, "list, number"),
+            "redate" => (3, 3, "list, number, date"),
             "autostart" => (1, 1, "action"),
             "list" => (0, 50, ""),
             _ => (0, 0, ""),

@@ -147,10 +147,13 @@ public static partial class Inbox
             : throw new UsageException($"No list called '{name}' (there are: {string.Join(", ", all.Select(l => l.Name))}).");
     }
 
-    public static InboxList Read(string path, Config config)
+    public static InboxList Read(string path, Config config) =>
+        Parse(path, File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').ToList(), config);
+
+    /// <summary>A list from its lines (as Read, without reading the file): what an edit re-reads after each change.</summary>
+    internal static InboxList Parse(string path, List<string> lines, Config config)
     {
         var name = System.IO.Path.GetFileNameWithoutExtension(path);
-        var lines = File.ReadAllText(path).Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').ToList();
         var open = new List<Item>();
         var closed = new List<Item>();
         var sections = new List<string>();
@@ -299,9 +302,9 @@ public static partial class Inbox
     [GeneratedRegex(@"\n{3,}", RegexOptions.CultureInvariant)]
     private static partial Regex Blanks();
 
-    private static string Write(string path, List<string> lines)
+    internal static string Write(string path, List<string> lines)
     {
-        File.WriteAllText(path, Blanks().Replace(string.Join("\n", lines), "\n\n"), new UTF8Encoding(false));
+        File.WriteAllText(path, Blanks().Replace(string.Join("\n", lines), "\n\n").TrimEnd('\n') + "\n", new UTF8Encoding(false));
         return path;
     }
 }

@@ -1,7 +1,7 @@
 # md-inbox
 
-Lists of items kept in markdown files, read and tidied from the command line: what's open, what's due, and closed
-items moved to a monthly archive by themselves.
+Lists of items kept in markdown files, read and kept from the command line: what's open, what's due, adding,
+closing and re-dating items, and closed items moved to a monthly archive by themselves.
 
 ```
 md-inbox list mine
@@ -73,6 +73,15 @@ md-inbox list [LIST...]          the open items, numbered, under their sections 
     --closed                     the closed items waiting for the archive (numbered c1, c2...)
 md-inbox show LIST N             an item in full (N from list; cN for a closed one)
 md-inbox due [--days N]          dated actions due within N days (default: due_ahead_days)
+md-inbox add [LIST] TEXT         add an item at the top of its section, dated today: "[Tag] Headline. Detail"
+    --file F                     the item from a markdown file instead (later lines go under it)
+    --section S                  the section (a few letters of its heading); else the tag's, from [tags]
+    --date DATE                  the date it was raised (default today)
+md-inbox close LIST N --reason R move an item to the closed section, "Closed (date): R." in front
+    --date DATE                  the date it closed (default today)
+md-inbox redate LIST N DATE      move the date in an item's tag ("[Waiting: Ann Lee, 20 Nov 2026]")
+    --note T                     and add "**18 Nov: T.** Next: Fri 20 Nov." at the end of the item
+    add, close, redate: --dry-run shows the result and changes nothing; --no-commit skips [git]
 md-inbox archive [--dry-run]     move closed items past keep_days into the archive, and commit them
     --as-of DATE                 archive and due: as though today were DATE
 md-inbox autostart on            the archive daily (daily_at) and at logon: off, restart, status
@@ -83,6 +92,23 @@ md-inbox config                  create the settings file (if missing) and say w
 the top, across its sections, so they change when items are added or closed: take them from a fresh `list`.
 
 **Exit codes:** 0 done; 1 failed; 2 settings or arguments.
+
+## Adding, closing and re-dating
+
+- **`add` writes the item in the lists' shape:** `[Tag] Headline. Detail` becomes
+  `- **2026-11-18:** **[Tag] Headline.** Detail` (the headline is up to the first full stop, question or exclamation
+  mark). Text that's already an item (`- ...`) goes in as it is; text with its own bold only gets the date.
+- **Where it goes, and nothing is guessed:** the list you name, or the one `[tags]` gives for its tag (looked up by the
+  whole tag, then without its date, then by its name: `[Waiting: Ann Lee, 20 Nov 2026]` finds `Waiting`). The section
+  is `--section`, else the tag's, else the list's only one; otherwise it stops and lists the sections.
+- **At the top of the section**, with a blank line after it if the section's items have them. An empty section's
+  stand-in (`*None.*`, `*Nothing open.*`) goes.
+- **`close`** moves the item, word for word, to the top of the closed section (made if the list has none), starting
+  `✔ **Closed (date): reason.** — `. A section left with no items says `*None.*`.
+- **`redate`** moves the date in the item's first tag, and with `--note` adds a dated line at the end of the item:
+  a chase, recorded in the item itself.
+- **N is from a fresh `list`**: numbers change as items are added and closed. Each command prints the item as it now
+  reads, logs it, and with `[git]` commits that list's file (and only that).
 
 ## The archive
 
@@ -119,7 +145,11 @@ due_ahead_days = 2
 daily_at = "06:30"
 log_file = "..."                    # default %LOCALAPPDATA%\md-inbox\md-inbox.log
 
-[git]                               # optional: commit (and push) what the archive moves
+[tags]                              # optional: where `add` puts a tagged item: "list" or "list / section"
+"Ann 1:1" = "one-to-ones / Ann Lee"
+Waiting = "waiting / Waiting"
+
+[git]                               # optional: commit (and push) what the archive and edits change
 repo = "."
 push = true
 trailers = ["Co-Authored-By: ..."]

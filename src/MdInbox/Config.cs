@@ -21,6 +21,10 @@ public class UsageException(string message) : Exception(message);
 ///     daily_at = "06:30"                  # autostart: the archive runs daily at this time, and at logon
 ///     log_file = "..."                    # default %LOCALAPPDATA%\md-inbox\md-inbox.log
 ///
+///     [tags]                              # optional: where `add` puts an item with this tag: "list" or "list / section"
+///     "Dan 1:1" = "one-to-ones / Dan Clark"
+///     Waiting = "waiting / Waiting"       # a tag's name, before any ": who, date"
+///
 ///     [git]                               # optional: commit (and push) what the archive moves
 ///     repo = "."
 ///     push = true
@@ -43,13 +47,16 @@ public sealed partial class Config
         "# due_ahead_days = 2\n" +
         "# daily_at = \"06:30\"\n" +
         "\n" +
-        "# [git]                             # commit (and push) what the archive moves\n" +
+        "# [tags]                            # where `add` puts a tagged item: \"list\" or \"list / section\"\n" +
+        "# Action = \"mine / Actions\"\n" +
+        "\n" +
+        "# [git]                             # commit (and push) what the archive and edits change\n" +
         "# repo = \".\"\n" +
         "# push = true\n";
 
     /// <summary>Every top-level setting: the strict check's list, and what a base file may supply.</summary>
     public static readonly string[] KnownKeys =
-        ["folder", "closed_heading", "keep_days", "archive_folder", "skip_sections", "due_ahead_days", "daily_at", "log_file", "git"];
+        ["folder", "closed_heading", "keep_days", "archive_folder", "skip_sections", "due_ahead_days", "daily_at", "log_file", "tags", "git"];
 
     private static readonly string[] TopKeys = KnownKeys;
 
@@ -63,6 +70,10 @@ public sealed partial class Config
     public string DailyAt { get; init; } = "06:30";
     public required string LogFile { get; init; }
     public GitSettings? Git { get; init; }
+
+    /// <summary>[tags]: a tag (or a tag's name) to the list, and optionally the section, `add` puts it in.</summary>
+    public IReadOnlyDictionary<string, (string List, string? Section)> Tags { get; init; } =
+        new Dictionary<string, (string, string?)>(StringComparer.OrdinalIgnoreCase);
 
     public static string? Environment(string name) =>
         string.IsNullOrEmpty(name) || name.Contains('\0') ? null : System.Environment.GetEnvironmentVariable(name);
@@ -147,6 +158,20 @@ public sealed partial class Config
         var daily = Text("daily_at") ?? "06:30";
         if (!Clock().IsMatch(daily))
             throw new UsageException($"{full}: daily_at should be a time such as \"06:30\".");
+        var tags = new Dictionary<string, (string, string?)>(StringComparer.OrdinalIgnoreCase);
+        if (raw.TryGetValue("tags", out var tagTable))
+        {
+            if (tagTable is not TomlTable table)
+                throw new UsageException($"{full}: [tags] should be a table of tag = \"list\" or \"list / section\".");
+            foreach (var (key, value) in table)
+            {
+                if (value is not string where || where.Trim().Length == 0)
+                    throw new UsageException($"{full}: [tags] {key} should be \"list\" or \"list / section\".");
+                var parts = where.Split(" / ", 2);
+                if (!tags.TryAdd(key.Trim(), (parts[0].Trim(), parts.Length > 1 && parts[1].Trim().Length > 0 ? parts[1].Trim() : null)))
+                    throw new UsageException($"{full}: [tags] has {key} twice (tags are matched ignoring case).");
+            }
+        }
         GitSettings? git = null;
         if (raw.TryGetValue("git", out var g))
         {
@@ -172,6 +197,7 @@ public sealed partial class Config
             DailyAt = daily,
             LogFile = Text("log_file") is { Length: > 0 } log ? PathFrom(log, dir) : PyPath.Pure(System.IO.Path.Combine(Local(env), "md-inbox.log")),
             Git = git,
+            Tags = tags,
         };
     }
 
