@@ -47,6 +47,8 @@ public sealed class InboxTests : IDisposable
         - **Wed 18 Nov 2026: [Action] Send the forecast.** Due soon.
         - **2026-11-01:** **[Action] Long-running thing.**
           - **Fri 20 Nov 2026: check it again.**
+        - **2026-11-12:** **[Waiting: Ann Lee, 18 Nov 2026] The router features.** Asked in her 1:1.
+          - **Chased 16 Nov (Teams).** Next: 18 Nov.
 
         ## Recently closed
 
@@ -104,7 +106,7 @@ public sealed class InboxTests : IDisposable
     {
         var list = Inbox.Read(Path.Combine(dir, "inbox", "mine.md"), Config);
         Assert.Equal(["Actions"], list.Sections);
-        Assert.Equal(2, list.Open.Count);
+        Assert.Equal(3, list.Open.Count);
         Assert.Empty(list.Closed);
     }
 
@@ -135,10 +137,33 @@ public sealed class InboxTests : IDisposable
     public void Due_finds_dated_lines_in_open_items()
     {
         var due = Inbox.DueItems(Inbox.Lists(Config), new DateOnly(2026, 11, 17), 2);
-        Assert.Equal([new DateOnly(2026, 11, 18)], due.Select(d => d.When));
-        Assert.Equal(2, Inbox.DueItems(Inbox.Lists(Config), new DateOnly(2026, 11, 17), 3).Count);   // the sub-bullet too
+        Assert.Equal([new DateOnly(2026, 11, 18), new DateOnly(2026, 11, 18)], due.Select(d => d.When));   // a line, and a tag
+        Assert.Equal(3, Inbox.DueItems(Inbox.Lists(Config), new DateOnly(2026, 11, 17), 3).Count);   // the sub-bullet too
         Assert.Contains("Wed 18 Nov", Run("due").Out);
         Assert.Contains("Nothing due.", Run("due", "--as-of", "2026-11-01").Out);
+    }
+
+    [Fact]
+    public void A_date_in_a_tag_makes_it_due_and_due_says_who_and_how_long()
+    {
+        var output = Run("due").Out;
+        Assert.Contains("Wed 18 Nov          mine 3: [Waiting] The router features  (Ann Lee; raised 12 Nov, 5 days ago)\n", output);
+        Assert.Contains("Send the forecast\n", output);   // no who, nothing added
+        Assert.Contains("overdue mine 3", Run("due", "--as-of", "2026-11-19").Out);
+        Assert.Contains("[Waiting: Ann Lee, 18 Nov 2026] The router features", Run("list", "--tag", "waiting").Out);
+    }
+
+    [Theory]
+    [InlineData("Waiting: Ann Lee, 20 Nov 2026", "Waiting", "Ann Lee", "2026-11-20")]
+    [InlineData("Action, 25 November 2026", "Action", null, "2026-11-25")]
+    [InlineData("Ann 1:1", "Ann 1:1", null, null)]
+    [InlineData("Waiting: Ann Lee", "Waiting", "Ann Lee", null)]
+    [InlineData("Lee, Ann", "Lee, Ann", null, null)]
+    public void Tags_come_apart_into_name_who_and_date(string tag, string name, string? who, string? when)
+    {
+        var parts = TagParts.Of(tag);
+        Assert.Equal((name, who, when is null ? (DateOnly?)null : DateOnly.Parse(when, System.Globalization.CultureInfo.InvariantCulture)),
+            (parts.Name, parts.Who, parts.When));
     }
 
     [Fact]

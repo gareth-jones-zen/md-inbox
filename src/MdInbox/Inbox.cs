@@ -30,8 +30,14 @@ public sealed partial record Item(string List, string Section, int Number, int S
     public DateOnly? ClosedOn =>
         ClosedDate().Match(Text) is { Success: true } m ? Parse(m.Groups[1].Value) : FirstDate(Text);
 
-    /// <summary>The first [Tag] on its (original) first line (not a markdown link's text).</summary>
+    /// <summary>The first [Tag] on its (original) first line (not a markdown link's text), whole: "Waiting: Ann
+    /// Lee, 20 Nov 2026".</summary>
     public string? Tag => TagPattern().Match(Head) is { Success: true } m ? m.Groups[1].Value.Trim() : null;
+
+    /// <summary>The tag's parts: its name, who it names (after a colon) and its date (after the last comma, when
+    /// that's a date). "[Waiting: Ann Lee, 20 Nov 2026]" is ("Waiting", "Ann Lee", 20 Nov 2026); "[Action, 25 Nov
+    /// 2026]" is ("Action", null, 25 Nov 2026); "[Ann 1:1]" is ("Ann 1:1", null, null).</summary>
+    public TagParts? Parts => Tag is { } tag ? TagParts.Of(tag) : null;
 
     /// <summary>A one-line title: the bold text holding the tag, else the first bold text that isn't just a date,
     /// else the start of the line; without the tag or markdown.</summary>
@@ -81,8 +87,31 @@ public sealed partial record Item(string List, string Section, int Number, int S
     private static partial Regex Markdown();
 }
 
-/// <summary>A dated action that's due: an item line starting with a date, such as "- **Wed 25 Nov 2026: ..." or
-/// "- **[Action, 25 Nov 2026]".</summary>
+/// <summary>A tag taken apart: see Item.Parts.</summary>
+public sealed partial record TagParts(string Name, string? Who, DateOnly? When)
+{
+    public static TagParts Of(string tag)
+    {
+        DateOnly? when = null;
+        var comma = tag.LastIndexOf(',');
+        if (comma > 0 && Inbox.LongDate(tag[(comma + 1)..].Trim()) is { } d)
+            (when, tag) = (d, tag[..comma].TrimEnd());
+        var colon = WhoColon().Match(tag);
+        return colon.Success
+            ? new TagParts(tag[..colon.Index].Trim(), tag[(colon.Index + 1)..].Trim() is { Length: > 0 } who ? who : null, when)
+            : new TagParts(tag.Trim(), null, when);
+    }
+
+    /// <summary>The tag as shown beside a date already given: its name (and who), without the date.</summary>
+    public override string ToString() => Who is null ? Name : $"{Name}: {Who}";
+
+    /// <summary>A colon that starts a "who", not one inside a name ("Ann 1:1"): followed by a space.</summary>
+    [GeneratedRegex(@":(?=\s)", RegexOptions.CultureInvariant)]
+    private static partial Regex WhoColon();
+}
+
+/// <summary>A dated action that's due: an item line starting with a date, such as "- **Wed 25 Nov 2026: ...", or
+/// an item whose tag carries one, "[Action, 25 Nov 2026]" or "[Waiting: Ann Lee, 25 Nov 2026]".</summary>
 public sealed record Due(DateOnly When, Item Item, string Line);
 
 /// <summary>One list: a markdown file in the inbox folder, its "## " sections, and the items in them.</summary>
@@ -162,22 +191,25 @@ public static partial class Inbox
         RegexOptions.CultureInvariant)]
     private static partial Regex Dated();
 
-    /// <summary>Open items with a line starting with a date on or before today + ahead days, soonest first.</summary>
+    /// <summary>"25 Nov 2026" or "25 November 2026" as a date; anything else null.</summary>
+    internal static DateOnly? LongDate(string text) =>
+        DateOnly.TryParseExact(text, ["d MMM yyyy", "d MMMM yyyy"], CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : null;
+
+    /// <summary>Open items with a line starting with a date, or a dated tag on their first line, on or before today
+    /// + ahead days, soonest first. A line counts once, whichever way it's dated.</summary>
     public static List<Due> DueItems(IEnumerable<InboxList> lists, DateOnly today, int ahead)
     {
         var found = new List<Due>();
         foreach (var item in lists.SelectMany(l => l.Open))
         {
-            foreach (var line in item.Lines)
+            for (var n = 0; n < item.Lines.Count; n++)
             {
-                if (Dated().Match(line) is not { Success: true } m)
-                    continue;
-                var text = m.Groups[1].Value;
-                var formats = new[] { "d MMM yyyy", "d MMMM yyyy" };
-                if (!DateOnly.TryParseExact(text, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var when))
-                    continue;
-                if (when <= today.AddDays(ahead))
-                    found.Add(new Due(when, item, line.Trim()));
+                var line = item.Lines[n];
+                var when = Dated().Match(line) is { Success: true } m ? LongDate(m.Groups[1].Value) : null;
+                if (when is null && n == 0)
+                    when = item.Parts?.When;
+                if (when is { } w && w <= today.AddDays(ahead))
+                    found.Add(new Due(w, item, line.Trim()));
             }
         }
         return found.OrderBy(d => d.When).ThenBy(d => d.Item.List).ToList();

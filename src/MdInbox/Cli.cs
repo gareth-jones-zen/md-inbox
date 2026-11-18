@@ -162,10 +162,22 @@ public static class Cli
         foreach (var d in due)
         {
             var when = d.When < today ? "overdue " : d.When == today ? "today   " : "        ";
-            host.Out.WriteLine($"{d.When:ddd dd MMM}  {when}{d.Item.List} {d.Item.Number}: {(d.Item.Tag is { } t ? $"[{t}] " : "")}{d.Item.Title}");
+            var parts = d.Item.Parts;
+            var tag = parts is null ? "" : parts.When is null ? $"[{parts}] " : $"[{parts.Name}] ";
+            var who = parts?.Who is { } name
+                ? $"  ({name}; {(d.Item.Date is { } raised ? $"raised {raised:d MMM}, {Age(today.DayNumber - raised.DayNumber)}" : "no date raised")})"
+                : "";
+            host.Out.WriteLine($"{d.When:ddd dd MMM}  {when}{d.Item.List} {d.Item.Number}: {tag}{d.Item.Title}{who}");
         }
         return 0;
     }
+
+    private static string Age(int days) => days switch
+    {
+        <= 0 => "today",
+        1 => "1 day ago",
+        _ => $"{days} days ago",
+    };
 
     private static int ArchiveCommand(Config config, Options options, CliHost host)
     {
