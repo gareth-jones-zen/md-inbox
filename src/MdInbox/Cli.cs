@@ -16,7 +16,9 @@ public sealed class CliHost
     public string ProgramDir { get; init; } = AppContext.BaseDirectory;
 }
 
-/// <summary>md-inbox: lists of items in markdown files. Exit codes: 0 done; 1 failed; 2 settings or arguments.</summary>
+/// <summary>md-inbox: lists of items in markdown files. Exit codes: 0 done (also when git isn't installed or the folder
+/// isn't a repository: saved, nothing to commit into); 1 failed; 2 settings or arguments; 3 an add, close or redate saved in
+/// its list but not committed (don't run it again).</summary>
 public static class Cli
 {
     public const string Prog = "md-inbox";
@@ -49,6 +51,9 @@ public static class Cli
         "    md-inbox autostart on            run the archive daily and at logon (off, restart, status)\n" +
         "    md-inbox config                  create the settings file (if missing) and say where it is\n\n" +
         "  LIST is a file's name without .md, or enough of it to be unique.\n\n" +
+        "exit codes: 0 done (with [git] but no git, or a folder that isn't a repository: saved, not committed, said\n" +
+        "  once); 1 failed; 2 settings or arguments; 3 add, close or redate saved but the repository refused the commit:\n" +
+        "  don't run it again.\n\n" +
         "options:\n" +
         "  -h, --help       show this help message and exit\n" +
         "  --version        show program's version number and exit\n" +
@@ -250,11 +255,27 @@ public static class Cli
         var committed = git.Open(log).Commit(message, [done.Path], trailers: git.Trailers, push: git.Push);
         if (committed.Error is { } error)
         {
-            log($"commit failed: {error}");
-            return 1;
+            // The edit is saved: running the command again would make it twice.
+            log($"saved, not committed (don't run it again): {error}");
+            return SavedNotCommitted;
         }
-        log(committed.Committed ? $"committed {committed.Commit}{(git.Push ? committed.Pushed ? ", pushed" : $", push failed: {committed.PushError}" : "")}" : "nothing to commit");
+        Committed(log, committed, git.Push);
         return 0;
+    }
+
+    /// <summary>The exit code for an add, close or redate saved in its list but not committed: don't run it again.</summary>
+    public const int SavedNotCommitted = 3;
+
+    /// <summary>Logs what a commit did. git not set up here (Skipped) has already said so, once, and isn't a failure.</summary>
+    private static void Committed(Action<string> log, RepoCommit.CommitResult done, bool push)
+    {
+        if (done.Skipped is not null)
+            return;
+        var pushed = !push ? ""
+            : done.Pushed ? ", pushed"
+            : done.PushSkipped is { } why ? $", not pushed: {why}"
+            : $", push failed: {done.PushError}";
+        log(done.Committed ? $"committed {done.Commit}{pushed}" : "nothing to commit");
     }
 
     private static string Age(int days) => days switch
@@ -279,9 +300,9 @@ public static class Cli
         if (done.Error is { } error)
         {
             log($"commit failed: {error}");
-            return 1;
+            return 1;   // the items are moved: a rerun finds nothing more to move, so it can't move them twice
         }
-        log(done.Committed ? $"committed {done.Commit}{(git.Push ? done.Pushed ? ", pushed" : $", push failed: {done.PushError}" : "")}" : "nothing to commit");
+        Committed(log, done, git.Push);
         return 0;
     }
 

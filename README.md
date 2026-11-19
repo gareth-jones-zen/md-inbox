@@ -91,7 +91,14 @@ md-inbox config                  create the settings file (if missing) and say w
 **LIST** is a file's name without `.md`, or enough of it to be unique. Item numbers count a list's open items from
 the top, across its sections, so they change when items are added or closed: take them from a fresh `list`.
 
-**Exit codes:** 0 done; 1 failed; 2 settings or arguments.
+**Exit codes:**
+
+| Code | Means |
+|---|---|
+| 0 | Done. Also when the settings have `[git]` but git isn't installed, or the folder isn't a git repository (or is a folder inside one rather than its top): the list is saved, nothing is committed, and it says so in one line |
+| 1 | Failed. For `archive`, also a commit the repository refused: the items are moved, and a rerun can't move them twice |
+| 2 | Settings or arguments |
+| 3 | `add`, `close` or `redate`: **saved in the list, but the repository refused the commit** (a hook, a lock, a conflict). Don't run it again, or the edit is made twice; commit the list's file by hand |
 
 ## Adding, closing and re-dating
 
@@ -108,7 +115,8 @@ the top, across its sections, so they change when items are added or closed: tak
 - **`redate`** moves the date in the item's first tag, and with `--note` adds a dated line at the end of the item:
   a chase, recorded in the item itself.
 - **N is from a fresh `list`**: numbers change as items are added and closed. Each command prints the item as it now
-  reads, logs it, and with `[git]` commits that list's file (and only that).
+  reads, logs it, and with `[git]` commits that list's file (and only that). If the repository refuses the commit,
+  the edit is still saved and it exits 3: don't run it again.
 
 ## The archive
 
@@ -150,10 +158,14 @@ log_file = "..."                    # default %LOCALAPPDATA%\md-inbox\md-inbox.l
 Waiting = "waiting / Waiting"
 
 [git]                               # optional: commit (and push) what the archive and edits change
-repo = "."
-push = true
+repo = "."                          # the repository's top
+push = true                         # a branch with no upstream isn't pushed (said once)
 trailers = ["Co-Authored-By: ..."]
 ```
+
+**git is optional.** With no `[git]`, nothing is committed. With one, but no git installed, or a `repo` that isn't a
+git repository (or is a folder inside one rather than its top, so nothing is committed into a repository the folder
+only sits in), the lists are still saved: it says "git: not committing: ..." once and exits 0.
 
 The file is read strictly: an unknown setting, or one of the wrong type, is an error that names it.
 
