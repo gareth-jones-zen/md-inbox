@@ -84,7 +84,7 @@ md-inbox redate LIST N DATE      move the date in an item's tag ("[Waiting: Ann 
     add, close, redate: --dry-run shows the result and changes nothing; --no-commit skips [git]
 md-inbox archive [--dry-run]     move closed items past keep_days into the archive, and commit them
     --as-of DATE                 archive and due: as though today were DATE
-md-inbox autostart on            the archive daily (daily_at) and at logon: off, restart, status
+md-inbox autostart on            the archive as [schedule] says (daily 06:30 and at logon): off, restart, status
 md-inbox config                  create the settings file (if missing) and say where it is
 ```
 
@@ -150,8 +150,10 @@ keep_days = 14
 archive_folder = "closed"           # relative to folder
 skip_sections = ["How to use"]      # sections that hold no items (an index, conventions)
 due_ahead_days = 2
-daily_at = "06:30"
 log_file = "..."                    # default %LOCALAPPDATA%\md-inbox\md-inbox.log
+
+[schedule]                          # optional: when autostart runs the archive (below)
+daily_at = "06:30"
 
 [tags]                              # optional: where `add` puts a tagged item: "list" or "list / section"
 "Ann 1:1" = "one-to-ones / Ann Lee"
@@ -168,6 +170,24 @@ git repository (or is a folder inside one rather than its top, so nothing is com
 only sits in), the lists are still saved: it says "git: not committing: ..." once and exits 0.
 
 The file is read strictly: an unknown setting, or one of the wrong type, is an error that names it.
+
+### `[schedule]`
+
+The scheduling settings every tool on background-tools-lib shares (its README, "[schedule]: the shared scheduling
+settings", has every key). md-inbox's task runs the archive daily at 06:30 and at logon by default:
+
+```toml
+[schedule]
+daily_at = "06:30"          # or every_minutes = N instead
+at_logon = true             # the default
+after_unlock_minutes = 0    # the default: no run after an unlock
+end_date = "2027-01-01"     # optional: from this date a scheduled run does nothing
+```
+
+`hours`, `days` and `end_date` are kept by the task's own runs (`archive --scheduled`); an `archive` run by hand always
+runs. The trigger keys are fixed when the task is registered: after changing them, run `md-inbox autostart on` again
+(`autostart status` says when it's needed). `daily_at` at the top level, the old name, is still read, with a line in
+the log; setting it alongside `[schedule]` is an error.
 
 ## Building
 

@@ -3,6 +3,7 @@ using PyCompat;
 using RepoCommit;
 using Tomlyn;
 using Tomlyn.Model;
+using WinBackground;
 
 namespace MdInbox;
 
@@ -18,8 +19,11 @@ public class UsageException(string message) : Exception(message);
 ///     archive_folder = "closed"           # where they go, as YYYY-MM.md; relative to folder
 ///     skip_sections = ["How to use"]      # "## " sections that hold no items (conventions, an index)
 ///     due_ahead_days = 2                  # `due`: dated items up to this many days ahead
-///     daily_at = "06:30"                  # autostart: the archive runs daily at this time, and at logon
 ///     log_file = "..."                    # default %LOCALAPPDATA%\md-inbox\md-inbox.log
+///
+///     [schedule]                          # optional: when autostart runs the archive (background-tools-lib's shared keys)
+///     daily_at = "06:30"                  # daily at this time (the default), and at logon
+///     # daily_at at the top level is the old name: still read, with a line in the log
 ///
 ///     [tags]                              # optional: where `add` puts an item with this tag: "list" or "list / section"
 ///     "Dan 1:1" = "one-to-ones / Dan Clark"
@@ -56,7 +60,16 @@ public sealed partial class Config
 
     /// <summary>Every top-level setting: the strict check's list, and what a base file may supply.</summary>
     public static readonly string[] KnownKeys =
-        ["folder", "closed_heading", "keep_days", "archive_folder", "skip_sections", "due_ahead_days", "daily_at", "log_file", "tags", "git"];
+        ["folder", "closed_heading", "keep_days", "archive_folder", "skip_sections", "due_ahead_days", "daily_at", "log_file", "tags", "git", "schedule"];
+
+    /// <summary>The tool's own defaults for [schedule]: the archive daily at 06:30 and at logon.</summary>
+    public static readonly ScheduleSettings ScheduleDefaults = new() { DailyAt = "06:30" };
+
+    /// <summary>[schedule] (a job): when autostart runs the archive. daily_at at the top level is its old name.</summary>
+    public ScheduleSettings Schedule { get; init; } = ScheduleDefaults;
+
+    /// <summary>Old setting names still read: one log line each when the archive runs.</summary>
+    public IReadOnlyList<string> Deprecations { get; init; } = [];
 
     private static readonly string[] TopKeys = KnownKeys;
 
@@ -155,9 +168,35 @@ public sealed partial class Config
                 throw new UsageException($"{full}: skip_sections should be a list of section names.");
             skip.AddRange(array.Select(x => ((string)x!).Trim()));
         }
-        var daily = Text("daily_at") ?? "06:30";
-        if (!Clock().IsMatch(daily))
+        // [schedule], the shared scheduling settings; daily_at at the top level is its old name, still read (not both).
+        var deprecations = new List<string>();
+        var oldDaily = Text("daily_at");
+        if (oldDaily is not null && !Clock().IsMatch(oldDaily))
             throw new UsageException($"{full}: daily_at should be a time such as \"06:30\".");
+        ScheduleSettings schedule;
+        if (raw.TryGetValue("schedule", out var section))
+        {
+            if (oldDaily is not null)
+                throw new UsageException($"{full}: daily_at and [schedule] are both set: keep daily_at under [schedule].");
+            if (section is not TomlTable scheduleTable)
+                throw new UsageException($"{full}: schedule should be a [schedule] table.");
+            try
+            {
+                schedule = ScheduleSettings.Parse(scheduleTable, ScheduleDefaults, TaskKind.Job, $"{full}: [schedule]");
+            }
+            catch (FormatException error)
+            {
+                throw new UsageException(error.Message);
+            }
+        }
+        else if (oldDaily is not null)
+        {
+            schedule = ScheduleDefaults with { DailyAt = oldDaily };
+            deprecations.Add("daily_at at the top level is the old name: move it to [schedule] daily_at");
+        }
+        else
+            schedule = ScheduleDefaults;
+        var daily = schedule.DailyAt ?? "06:30";
         var tags = new Dictionary<string, (string, string?)>(StringComparer.OrdinalIgnoreCase);
         if (raw.TryGetValue("tags", out var tagTable))
         {
@@ -195,6 +234,8 @@ public sealed partial class Config
             SkipSections = skip,
             DueAheadDays = Number("due_ahead_days", 2, 0),
             DailyAt = daily,
+            Schedule = schedule,
+            Deprecations = deprecations,
             LogFile = Text("log_file") is { Length: > 0 } log ? PathFrom(log, dir) : PyPath.Pure(System.IO.Path.Combine(Local(env), "md-inbox.log")),
             Git = git,
             Tags = tags,

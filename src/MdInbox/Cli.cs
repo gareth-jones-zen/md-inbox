@@ -12,6 +12,9 @@ public sealed class CliHost
     public TextWriter Err { get; init; } = Console.Error;
     public Func<string, string?> Env { get; init; } = Config.Environment;
     public Func<DateOnly> Today { get; init; } = () => DateOnly.FromDateTime(DateTime.Now);
+
+    /// <summary>The local time now, for [schedule] hours, days and end_date on a scheduled run.</summary>
+    public Func<DateTime> Now { get; init; } = () => DateTime.Now;
     public Func<ITask> Task { get; init; } = () => new ScheduledTask(Cli.TaskName, "Moves closed inbox items to the monthly archive (md-inbox archive).");
     public string ProgramDir { get; init; } = AppContext.BaseDirectory;
 }
@@ -69,7 +72,7 @@ public static class Cli
         public string? Config, Section, Tag, File, Reason, Note;
         public string Command = "";
         public List<string> Args = [];
-        public bool Closed, DryRun, NoCommit;
+        public bool Closed, DryRun, NoCommit, Scheduled;
         public int? Days;
         public DateOnly? AsOf, Raised;
     }
@@ -288,6 +291,14 @@ public static class Cli
     private static int ArchiveCommand(Config config, Options options, CliHost host)
     {
         var log = Logger.Create(config.LogFile, host.Out, stampEcho: false);
+        foreach (var note in config.Deprecations)
+            log($"settings: {note}");
+        // A run by the task (--scheduled) keeps to [schedule]'s hours, days and end_date; one by hand always runs.
+        if (options.Scheduled && !config.Schedule.IsActive(host.Now(), out var why))
+        {
+            log($"archive: not run ({why})");
+            return 0;
+        }
         var result = Inbox.Archive(config, options.AsOf ?? host.Today(), options.DryRun);
         foreach (var (list, month, item) in result.Moved)
             log($"{(options.DryRun ? "would move" : "moved")}  {list} -> {month}  {item.Title}");
@@ -314,9 +325,9 @@ public static class Cli
             case "on":
                 var background = Path.Combine(host.ProgramDir, BackgroundExe);
                 var exe = File.Exists(background) ? background : Path.Combine(host.ProgramDir, "md-inbox.exe");
-                var line = task.Enable(exe, ["--config", config.Path, "archive"], Path.GetDirectoryName(config.Path),
-                    new TaskSchedule { AtLogon = true, DailyAt = config.DailyAt, KeepRunning = false, TimeLimit = TimeSpan.FromMinutes(10) });
-                host.Out.WriteLine($"Autostart is on: '{TaskName}' runs the archive daily at {config.DailyAt} and at logon, and has run now.\n  {line}");
+                var line = task.Enable(exe, ["--config", config.Path, "archive", "--scheduled"], Path.GetDirectoryName(config.Path),
+                    config.Schedule.ToTaskSchedule(TaskKind.Job, TimeSpan.FromMinutes(10)));
+                host.Out.WriteLine($"Autostart is on: '{TaskName}' runs the archive {When(config.Schedule)}, and has run now.\n  {line}");
                 return 0;
             case "off":
                 host.Out.WriteLine(task.Disable() ? "Autostart is off." : "Autostart was already off.");
@@ -341,9 +352,26 @@ public static class Cli
                     host.Out.WriteLine($"Autostart is on ('{TaskName}').");
                     foreach (var name in new[] { "state", "last_run", "last_result", "next_run", "command" })
                         host.Out.WriteLine($"  {name.Replace('_', ' '),-12} {info.GetValueOrDefault(name, "")}");
+                    if (ScheduleDrift.Advice(ScheduleDrift.Check(info, config.Schedule.Fingerprint(TaskKind.Job)), Prog) is { } advice)
+                        host.Out.WriteLine($"  {advice}");
                 }
                 return 0;
         }
+    }
+
+    /// <summary>When the task runs, in words: "daily at 06:30 and at logon".</summary>
+    internal static string When(ScheduleSettings schedule)
+    {
+        var parts = new List<string>();
+        if (schedule.EveryMinutes is > 0 and var minutes)
+            parts.Add($"every {minutes} minutes");
+        else if (schedule.DailyAt is { } daily)
+            parts.Add($"daily at {daily}");
+        if (schedule.AtLogon)
+            parts.Add("at logon");
+        if (schedule.AfterUnlockMinutes > 0)
+            parts.Add($"{schedule.AfterUnlockMinutes} minute(s) after each unlock");
+        return parts.Count <= 1 ? string.Join("", parts) : $"{string.Join(", ", parts[..^1])} and {parts[^1]}";
     }
 
     private static Options? Parse(IReadOnlyList<string> argv, CliHost host)
@@ -409,6 +437,9 @@ public static class Cli
                     break;
                 case ("archive" or "add" or "close" or "redate", "--dry-run"):
                     options.DryRun = true;
+                    break;
+                case ("archive", "--scheduled"):
+                    options.Scheduled = true;
                     break;
                 case ("add" or "close" or "redate", "--no-commit"):
                     options.NoCommit = true;
