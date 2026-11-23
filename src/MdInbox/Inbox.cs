@@ -302,9 +302,12 @@ public static partial class Inbox
     [GeneratedRegex(@"\n{3,}", RegexOptions.CultureInvariant)]
     private static partial Regex Blanks();
 
+    /// <summary>Writes a list's lines, keeping the file's own line endings (CRLF stays CRLF).</summary>
     internal static string Write(string path, List<string> lines)
     {
-        File.WriteAllText(path, Blanks().Replace(string.Join("\n", lines), "\n\n").TrimEnd('\n') + "\n", new UTF8Encoding(false));
+        var crlf = File.Exists(path) && File.ReadAllText(path).Contains("\r\n", StringComparison.Ordinal);
+        var text = Blanks().Replace(string.Join("\n", lines), "\n\n").TrimEnd('\n') + "\n";
+        File.WriteAllText(path, crlf ? text.Replace("\n", "\r\n", StringComparison.Ordinal) : text, new UTF8Encoding(false));
         return path;
     }
 }

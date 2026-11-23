@@ -81,7 +81,11 @@ md-inbox close LIST N --reason R move an item to the closed section, "Closed (da
     --date DATE                  the date it closed (default today)
 md-inbox redate LIST N DATE      move the date in an item's tag ("[Waiting: Ann Lee, 20 Nov 2026]")
     --note T                     and add "**18 Nov: T.** Next: Fri 20 Nov." at the end of the item
-    add, close, redate: --dry-run shows the result and changes nothing; --no-commit skips [git]
+md-inbox move LIST N --section S move an item, word for word, to the top of a section (a few letters of its heading)
+    --to LIST                    in another list (default: the same one)
+    --bottom                     to the end of the section instead (--top, the default)
+    --note T                     and add "**23 Nov 2026: moved to <section>.** T" at the end of the item
+    add, close, redate, move: --dry-run shows the result and changes nothing; --no-commit skips [git]
 md-inbox archive [--dry-run]     move closed items past keep_days into the archive, and commit them
     --as-of DATE                 archive and due: as though today were DATE
 md-inbox autostart on            the archive as [schedule] says (daily 06:30 and at logon): off, restart, status
@@ -98,9 +102,9 @@ the top, across its sections, so they change when items are added or closed: tak
 | 0 | Done. Also when the settings have `[git]` but git isn't installed, or the folder isn't a git repository (or is a folder inside one rather than its top): the list is saved, nothing is committed, and it says so in one line |
 | 1 | Failed. For `archive`, also a commit the repository refused: the items are moved, and a rerun can't move them twice |
 | 2 | Settings or arguments |
-| 3 | `add`, `close` or `redate`: **saved in the list, but the repository refused the commit** (a hook, a lock, a conflict). Don't run it again, or the edit is made twice; commit the list's file by hand |
+| 3 | `add`, `close`, `redate` or `move`: **saved in the list, but the repository refused the commit** (a hook, a lock, a conflict). Don't run it again, or the edit is made twice; commit the list's file by hand |
 
-## Adding, closing and re-dating
+## Adding, closing, re-dating and moving
 
 - **`add` writes the item in the lists' shape:** `[Tag] Headline. Detail` becomes
   `- **2026-11-18:** **[Tag] Headline.** Detail` (the headline is up to the first full stop, question or exclamation
@@ -114,8 +118,13 @@ the top, across its sections, so they change when items are added or closed: tak
   `✔ **Closed (date): reason.** — `. A section left with no items says `*None.*`.
 - **`redate`** moves the date in the item's first tag, and with `--note` adds a dated line at the end of the item:
   a chase, recorded in the item itself.
+- **`move`** takes an open item, every line of it, to another section of the same list or (with `--to`) another list:
+  to the top, like `add`, or with `--bottom` the end, spaced like the section's items. The section it leaves says
+  `*None.*` if it's now empty, and an empty section it goes to loses its stand-in. `--note` adds a dated line saying
+  where it went and why. It won't move a closed item, or into the closed section (that's `close`).
 - **N is from a fresh `list`**: numbers change as items are added and closed. Each command prints the item as it now
-  reads, logs it, and with `[git]` commits that list's file (and only that). If the repository refuses the commit,
+  reads, logs it, and with `[git]` commits that list's file (and only that; a `move` between lists commits both).
+- **Line endings are kept:** a list with CRLF line endings stays CRLF. If the repository refuses the commit,
   the edit is still saved and it exits 3: don't run it again.
 
 ## The archive

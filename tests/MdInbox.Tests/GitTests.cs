@@ -122,6 +122,19 @@ public sealed class GitTests : IDisposable
     }
 
     [Fact]
+    public void A_move_to_another_list_commits_both_files()
+    {
+        File.WriteAllText(Path.Combine(dir, "inbox", "later.md"), "# Later\n\n## Someday\n\n*None.*\n");
+        InitRepo();
+        var (code, _, _) = Run("move", "mine", "1", "--to", "later", "--section", "Someday");
+        Assert.Equal(0, code);
+        Assert.Equal("?? md-inbox.log", Git("status", "--porcelain").Trim());   // both lists committed together
+        var files = Git("show", "--name-only", "--format=", "HEAD").Trim().Replace("\r", "").Split('\n').Order().ToArray();
+        Assert.Equal(["inbox/later.md", "inbox/mine.md"], files);
+        Assert.Contains("**[Action] Send the forecast.**", File.ReadAllText(Path.Combine(dir, "inbox", "later.md")));
+    }
+
+    [Fact]
     public void A_commit_the_repository_refuses_after_an_edit_is_exit_3_and_the_edit_is_saved()
     {
         InitRepo();

@@ -175,6 +175,23 @@ public static partial class Inbox
         var closed = new List<string> { $"- ✔ **Closed ({on:yyyy-MM-dd}): {reason}** — {item.Lines[0].TrimStart()[2..]}" };
         closed.AddRange(item.Lines.Skip(1));
 
+        var lines = Remove(config, list, item);
+        if (Bounds(lines, config.ClosedHeading).Heading < 0)
+        {
+            while (lines.Count > 0 && lines[^1].Trim().Length == 0)
+                lines.RemoveAt(lines.Count - 1);
+            lines.AddRange(["", $"## {config.ClosedHeading}", ""]);
+        }
+        lines = Insert(Parse(list.Path, lines, config), config.ClosedHeading, closed, config);
+        if (!dryRun)
+            Write(list.Path, lines);
+        return new Edited(list.Path, list.Name, config.ClosedHeading, closed);
+    }
+
+    /// <summary>The list's lines without an item (and the blank lines after it). A section left with no open items says
+    /// "*None.*".</summary>
+    private static List<string> Remove(Config config, InboxList list, Item item)
+    {
         var lines = list.Lines.ToList();
         var stop = item.End;
         while (stop < lines.Count && lines[stop].Trim().Length == 0 && stop > item.Start)
@@ -192,16 +209,52 @@ public static partial class Inbox
                 lines.InsertRange(at, ["", "*None.*", ""]);
             }
         }
-        if (Bounds(lines, config.ClosedHeading).Heading < 0)
+        return lines;
+    }
+
+    /// <summary>The list's lines with item lines at the end of a section's open items (spaced like them); an empty
+    /// section is the same as the top.</summary>
+    private static List<string> InsertBottom(InboxList list, string section, IReadOnlyList<string> item, Config config)
+    {
+        var items = list.Open.Where(i => i.Section.Equals(section, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (items.Count == 0)
+            return Insert(list, section, item, config);
+        var lines = list.Lines.ToList();
+        var spaced = items.Count == 1 || Enumerable.Range(items[0].End, items[1].Start - items[0].End).Any(n => lines[n].Trim().Length == 0);
+        lines.InsertRange(items[^1].End, spaced ? ["", .. item] : item);
+        return lines;
+    }
+
+    // ---- move -----------------------------------------------------------------------------------------------------
+
+    /// <summary>Moves an open item, word for word, to the top (or with bottom, the end) of a section in the same list or
+    /// another. With a note, a dated line at the end of the item says so: "**23 Nov 2026: moved to In progress.** note".
+    /// The section it leaves, if now empty, says "*None.*". Writes each list once, unless it's a dry run.</summary>
+    public static (Edited From, Edited To) Move(Config config, InboxList from, int number, InboxList to, string section,
+        bool bottom, string? note, DateOnly today, bool dryRun)
+    {
+        var item = OpenItem(from, number);
+        if (section.Equals(config.ClosedHeading, StringComparison.OrdinalIgnoreCase))
+            throw new UsageException($"'{section}' is where closed items go: use `close` to close it.");
+        var moved = item.Lines.ToList();
+        if (!string.IsNullOrWhiteSpace(note))
         {
-            while (lines.Count > 0 && lines[^1].Trim().Length == 0)
-                lines.RemoveAt(lines.Count - 1);
-            lines.AddRange(["", $"## {config.ClosedHeading}", ""]);
+            note = note.Trim();
+            if (!".?!".Contains(note[^1], StringComparison.Ordinal))
+                note += ".";
+            moved.Add($"  - **{today.ToString("d MMM yyyy", CultureInfo.InvariantCulture)}: moved to {section}.** {note}");
         }
-        lines = Insert(Parse(list.Path, lines, config), config.ClosedHeading, closed, config);
+        var same = string.Equals(Path.GetFullPath(from.Path), Path.GetFullPath(to.Path), StringComparison.OrdinalIgnoreCase);
+        var left = Remove(config, from, item);
+        var target = same ? Parse(from.Path, left, config) : to;
+        var placed = bottom ? InsertBottom(target, section, moved, config) : Insert(target, section, moved, config);
         if (!dryRun)
-            Write(list.Path, lines);
-        return new Edited(list.Path, list.Name, config.ClosedHeading, closed);
+        {
+            if (!same)
+                Write(from.Path, left);
+            Write(to.Path, placed);
+        }
+        return (new Edited(from.Path, from.Name, item.Section, item.Lines), new Edited(to.Path, to.Name, section, moved));
     }
 
     // ---- redate ---------------------------------------------------------------------------------------------------

@@ -29,7 +29,7 @@ public static class Cli
     public const string BackgroundExe = "md-inbox-background.exe";
 
     private const string Usage =
-        "usage: md-inbox [-h] [--version] [--config CONFIG] {config,list,show,due,add,close,redate,archive,autostart} ...";
+        "usage: md-inbox [-h] [--version] [--config CONFIG] {config,list,show,due,add,close,redate,move,archive,autostart} ...";
 
     // Explicit "\n" throughout (a raw literal would take the .cs file's line endings).
     public const string Help =
@@ -49,30 +49,33 @@ public static class Cli
         "    md-inbox close LIST N --reason R move an item to the closed section: \"Closed (date): R.\" in front\n" +
         "    md-inbox redate LIST N DATE      move the date in an item's tag (\"[Waiting: Ann, 20 Nov 2026]\")\n" +
         "        --note T                     and add \"**18 Nov: T.** Next: <date>.\" under it\n" +
-        "      add, close, redate: --dry-run shows it and changes nothing; --no-commit skips [git]\n" +
+        "    md-inbox move LIST N --section S move an item to the top of a section (--bottom: the end), word for word\n" +
+        "        --to LIST                    in another list\n" +
+        "        --note T                     and add \"**23 Nov 2026: moved to <section>.** T\" at the end of it\n" +
+        "      add, close, redate, move: --dry-run shows it and changes nothing; --no-commit skips [git]\n" +
         "    md-inbox archive [--dry-run]     move closed items past keep_days to the archive, and commit them\n" +
         "    md-inbox autostart on            run the archive daily and at logon (off, restart, status)\n" +
         "    md-inbox config                  create the settings file (if missing) and say where it is\n\n" +
         "  LIST is a file's name without .md, or enough of it to be unique.\n\n" +
         "exit codes: 0 done (with [git] but no git, or a folder that isn't a repository: saved, not committed, said\n" +
-        "  once); 1 failed; 2 settings or arguments; 3 add, close or redate saved but the repository refused the commit:\n" +
+        "  once); 1 failed; 2 settings or arguments; 3 add, close, redate or move saved but the repository refused the commit:\n" +
         "  don't run it again.\n\n" +
         "options:\n" +
         "  -h, --help       show this help message and exit\n" +
         "  --version        show program's version number and exit\n" +
         "  --config CONFIG  settings file (default %APPDATA%\\md-inbox\\config.toml)\n";
 
-    private static readonly string[] Commands = ["config", "list", "show", "due", "add", "close", "redate", "archive", "autostart"];
+    private static readonly string[] Commands = ["config", "list", "show", "due", "add", "close", "redate", "move", "archive", "autostart"];
 
     public static string Version =>
         typeof(Cli).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
 
     internal sealed class Options
     {
-        public string? Config, Section, Tag, File, Reason, Note;
+        public string? Config, Section, Tag, File, Reason, Note, To;
         public string Command = "";
         public List<string> Args = [];
-        public bool Closed, DryRun, NoCommit, Scheduled;
+        public bool Closed, DryRun, NoCommit, Scheduled, Bottom;
         public int? Days;
         public DateOnly? AsOf, Raised;
     }
@@ -113,6 +116,7 @@ public static class Cli
                 "add" => AddCommand(config, options, host),
                 "close" => CloseCommand(config, options, host),
                 "redate" => RedateCommand(config, options, host),
+                "move" => MoveCommand(config, options, host),
                 "archive" => ArchiveCommand(config, options, host),
                 _ => Autostart(config, options.Args[0], host),
             };
@@ -235,6 +239,23 @@ public static class Cli
             $"Inbox: {done.List}: next date {when:d MMM} for {Short(done)}");
     }
 
+    private static int MoveCommand(Config config, Options options, CliHost host)
+    {
+        var from = Inbox.List(config, options.Args[0]);
+        if (options.Args[1].StartsWith('c'))
+            throw new UsageException($"{options.Args[1]} is a closed item: only open items move.");
+        var target = options.To is null ? from : Inbox.List(config, options.To);
+        if (options.Section is { } s && config.ClosedHeading.Contains(s.Trim(), StringComparison.OrdinalIgnoreCase)
+            && !target.Sections.Any(x => x.Contains(s.Trim(), StringComparison.OrdinalIgnoreCase)))
+            throw new UsageException($"'{config.ClosedHeading}' is where closed items go: use `close` to close it.");
+        var (to, section) = Inbox.Place(config, target.Name, options.Section, null);
+        var (left, done) = Inbox.Move(config, from, Number(options.Args[1]), to, section, options.Bottom, options.Note, host.Today(), options.DryRun);
+        var other = left.Path != done.Path;
+        var where = other ? $"{done.List} / {done.Section} (from {left.List} / {left.Section})" : $"{done.List} / {done.Section}";
+        return Report(config, options, host, done, $"{(options.DryRun ? "Would move" : "Moved")} {from.Name} {options.Args[1]} to {where}",
+            $"Inbox: move to {done.List} / {done.Section}: {Short(done)}", other ? [left.Path] : null);
+    }
+
     private static int Number(string text) =>
         int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var n) ? n
             : throw new UsageException($"'{text}' isn't an item number (take it from a fresh `list`).");
@@ -246,7 +267,8 @@ public static class Cli
     }
 
     /// <summary>Shows what an edit did, logs it, and commits the list's file when the settings have [git].</summary>
-    private static int Report(Config config, Options options, CliHost host, Inbox.Edited done, string what, string message)
+    private static int Report(Config config, Options options, CliHost host, Inbox.Edited done, string what, string message,
+        IReadOnlyList<string>? alsoCommit = null)
     {
         host.Out.Write($"{what}:\n\n{done.Text}\n\n");
         if (options.DryRun)
@@ -255,7 +277,7 @@ public static class Cli
         if (options.NoCommit || config.Git is not { Commit: true } git)
             return 0;
         var log = Logger.Create(config.LogFile, host.Out, stampEcho: false);
-        var committed = git.Open(log).Commit(message, [done.Path], trailers: git.Trailers, push: git.Push);
+        var committed = git.Open(log).Commit(message, [done.Path, .. alsoCommit ?? []],trailers: git.Trailers, push: git.Push);
         if (committed.Error is { } error)
         {
             // The edit is saved: running the command again would make it twice.
@@ -435,16 +457,16 @@ public static class Cli
                 case ("list", "--closed"):
                     options.Closed = true;
                     break;
-                case ("archive" or "add" or "close" or "redate", "--dry-run"):
+                case ("archive" or "add" or "close" or "redate" or "move", "--dry-run"):
                     options.DryRun = true;
                     break;
                 case ("archive", "--scheduled"):
                     options.Scheduled = true;
                     break;
-                case ("add" or "close" or "redate", "--no-commit"):
+                case ("add" or "close" or "redate" or "move", "--no-commit"):
                     options.NoCommit = true;
                     break;
-                case ("add", "--section"):
+                case ("add" or "move", "--section"):
                     options.Section = Value(name, ref i, arg);
                     break;
                 case ("add", "--file"):
@@ -453,8 +475,17 @@ public static class Cli
                 case ("close", "--reason"):
                     options.Reason = Value(name, ref i, arg);
                     break;
-                case ("redate", "--note"):
+                case ("redate" or "move", "--note"):
                     options.Note = Value(name, ref i, arg);
+                    break;
+                case ("move", "--to"):
+                    options.To = Value(name, ref i, arg);
+                    break;
+                case ("move", "--bottom"):
+                    options.Bottom = true;
+                    break;
+                case ("move", "--top"):
+                    options.Bottom = false;
                     break;
                 case ("add" or "close", "--date"):
                     var raised = Value(name, ref i, arg);
@@ -485,6 +516,7 @@ public static class Cli
             "add" => (0, 2, ""),
             "close" => (2, 2, "list, number"),
             "redate" => (3, 3, "list, number, date"),
+            "move" => (2, 2, "list, number"),
             "autostart" => (1, 1, "action"),
             "list" => (0, 50, ""),
             _ => (0, 0, ""),

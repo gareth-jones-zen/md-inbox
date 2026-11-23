@@ -190,6 +190,66 @@ public sealed class EditsTests : IDisposable
     }
 
     [Fact]
+    public void Move_within_a_list_goes_to_the_top_or_bottom_spaced_like_the_section()
+    {
+        var (code, output, _) = Run("move", "mine", "3", "--section", "act");
+        Assert.Equal(0, code);
+        Assert.StartsWith("Moved mine 3 to mine / Actions:\n\n- **2026-09-01:** **[Action] One day.**\n", output);
+        var mine = Read("mine");
+        Assert.Contains("## Actions\n\n- **2026-09-01:** **[Action] One day.**\n- **2026-11-13:** **[Action] Send the forecast.** Soon.\n" +
+                        "- **2026-11-01:** **[Action] Long-running thing.**\n", mine);   // tight, like its items
+        Assert.Contains("## Someday\n\n*None.*", mine);   // the section it left says so
+
+        Run("move", "mine", "1", "--section", "Actions", "--bottom");   // One day, now first, to the end
+        Assert.Contains("- **2026-11-01:** **[Action] Long-running thing.**\n- **2026-09-01:** **[Action] One day.**\n", Read("mine"));
+
+        Run("move", "mine", "3", "--section", "some", "--bottom");   // to an empty section: its stand-in goes
+        Assert.Contains("## Someday\n\n- **2026-09-01:** **[Action] One day.**\n", Read("mine"));
+        Assert.DoesNotContain("*None.*", Read("mine"));
+    }
+
+    [Fact]
+    public void Move_to_another_list_keeps_every_line_and_notes_it()
+    {
+        var (code, output, _) = Run("move", "people", "1", "--to", "mine", "--section", "some", "--note", "for later");
+        Assert.Equal(0, code);
+        Assert.StartsWith("Moved people 1 to mine / Someday (from people / Ann):", output);
+        Assert.Contains("## Someday\n\n- **2026-11-06:** **[Ann 1:1] The NetBox query.** A question.\n" +
+                        "  - **12 Nov: didn't come up.** Carry it.\n" +
+                        "  - **18 Nov 2026: moved to Someday.** for later.\n\n- **2026-09-01:** **[Action] One day.**", Read("mine"));
+        Assert.Contains("## Ann\n\n- **2026-10-08:** **[Ann 1:1] The OAuth client.** Detail.\n\n## Bob", Read("people"));
+        Assert.DoesNotContain("NetBox", Read("people").Split("## Recently closed")[0]);
+    }
+
+    [Fact]
+    public void Move_refuses_what_it_cant_place_and_dry_runs_change_nothing()
+    {
+        Assert.Contains("matches more than one section", Run("move", "mine", "1", "--section", "s").Err);
+        Assert.Contains("Which section? Use --section.", Run("move", "mine", "1").Err);
+        Assert.Contains("use `close`", Run("move", "people", "1", "--section", "Recently closed").Err);
+        Assert.Contains("c1 is a closed item", Run("move", "people", "c1", "--section", "Bob").Err);
+        Assert.Contains("there's no 9", Run("move", "mine", "9", "--section", "some").Err);
+
+        var (mine, people) = (Read("mine"), Read("people"));
+        var dry = Run("move", "people", "2", "--to", "mine", "--section", "act", "--dry-run");
+        Assert.Equal(0, dry.Code);
+        Assert.StartsWith("Would move people 2 to mine / Actions (from people / Ann):", dry.Out);
+        Assert.Equal(mine, Read("mine"));
+        Assert.Equal(people, Read("people"));
+    }
+
+    [Fact]
+    public void A_list_with_crlf_line_endings_keeps_them()
+    {
+        var path = Path.Combine(dir, "inbox", "mine.md");
+        File.WriteAllText(path, (Mine + "\n").Replace("\n", "\r\n"));
+        Run("move", "mine", "3", "--section", "act");
+        var text = File.ReadAllText(path);
+        Assert.Contains("## Actions\r\n\r\n- **2026-09-01:** **[Action] One day.**\r\n- **2026-11-13:**", text);
+        Assert.DoesNotContain("\n", text.Replace("\r\n", ""));   // no bare LF anywhere
+    }
+
+    [Fact]
     public void Redate_moves_the_tags_date_and_notes_the_chase()
     {
         var (code, output, _) = Run("redate", "waiting", "1", "2026-11-27", "--note", "chased in Teams");
