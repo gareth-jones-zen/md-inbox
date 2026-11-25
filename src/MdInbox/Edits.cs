@@ -266,7 +266,9 @@ public static partial class Inbox
         var item = OpenItem(list, number);
         if (item.Tag is not { } tag || item.Parts?.When is null)
             throw new UsageException($"{list.Name} {number}'s tag has no date to move" + (item.Tag is { } t ? $": [{t}]." : " (it has no tag)."));
-        var moved = $"{tag[..tag.LastIndexOf(',')]}, {when.ToString("d MMM yyyy", CultureInfo.InvariantCulture)}";
+        // The new date written as the old one was: "27 Nov 2026", or "2026-11-27".
+        var iso = DateOnly.TryParseExact(tag[(tag.LastIndexOf(',') + 1)..].Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out _);
+        var moved = $"{tag[..tag.LastIndexOf(',')]}, {when.ToString(iso ? "yyyy-MM-dd" : "d MMM yyyy", CultureInfo.InvariantCulture)}";
         var first = item.Lines[0];
         var at = first.IndexOf($"[{tag}]", StringComparison.Ordinal);
         var lines = item.Lines.ToList();

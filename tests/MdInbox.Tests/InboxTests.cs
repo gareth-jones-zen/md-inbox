@@ -156,6 +156,8 @@ public sealed class InboxTests : IDisposable
     [Theory]
     [InlineData("Waiting: Ann Lee, 20 Nov 2026", "Waiting", "Ann Lee", "2026-11-20")]
     [InlineData("Action, 25 November 2026", "Action", null, "2026-11-25")]
+    [InlineData("Waiting: Ann Lee, 2026-11-30", "Waiting", "Ann Lee", "2026-11-30")]
+    [InlineData("Action — system, 2026-12-07", "Action — system", null, "2026-12-07")]
     [InlineData("Ann 1:1", "Ann 1:1", null, null)]
     [InlineData("Waiting: Ann Lee", "Waiting", "Ann Lee", null)]
     [InlineData("Lee, Ann", "Lee, Ann", null, null)]

@@ -18,7 +18,7 @@ public sealed class JsonTests : IDisposable
 
         ## Waiting
 
-        - **2026-11-20:** **[Waiting: Cleo Marsh, 24 Nov 2026] The café floor plan.** Asked on Teams — résumé to follow.
+        - **2026-11-20:** **[Waiting: Cleo Marsh, 2026-11-24] The café floor plan.** Asked on Teams — résumé to follow.
           - **22 Nov: chased.** Next: Tue 24 Nov.
             More about the chase.
           - **Second update.**
@@ -94,11 +94,11 @@ public sealed class JsonTests : IDisposable
         Assert.Equal(1, first.GetProperty("n").GetInt32());
         Assert.Equal("Waiting", S(first, "section"));
         Assert.Equal("2026-11-20", S(first, "date"));
-        Assert.Equal("Waiting: Cleo Marsh, 24 Nov 2026", S(first, "tag"));
+        Assert.Equal("Waiting: Cleo Marsh, 2026-11-24", S(first, "tag"));
         Assert.Equal("The café floor plan", S(first, "title"));
         Assert.Equal("2026-11-24", S(first, "due"));   // the chase date in the tag
         Assert.Equal("Cleo Marsh", S(first, "who"));
-        Assert.Equal("**2026-11-20:** **[Waiting: Cleo Marsh, 24 Nov 2026] The café floor plan.** Asked on Teams — résumé to follow.", S(first, "text"));
+        Assert.Equal("**2026-11-20:** **[Waiting: Cleo Marsh, 2026-11-24] The café floor plan.** Asked on Teams — résumé to follow.", S(first, "text"));
         Assert.Equal(["**22 Nov: chased.** Next: Tue 24 Nov.\nMore about the chase.", "**Second update.**\n- A deeper note."],
             first.GetProperty("subitems").EnumerateArray().Select(s => s.GetString()));
         Assert.Equal(9, first.GetProperty("line").GetInt32());   // 1-based, CRLF or not

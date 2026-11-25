@@ -124,7 +124,7 @@ public sealed partial record TagParts(string Name, string? Who, DateOnly? When)
     {
         DateOnly? when = null;
         var comma = tag.LastIndexOf(',');
-        if (comma > 0 && Inbox.LongDate(tag[(comma + 1)..].Trim()) is { } d)
+        if (comma > 0 && Inbox.ParseDate(tag[(comma + 1)..]) is { } d)   // "25 Nov 2026" or "2026-11-25"
             (when, tag) = (d, tag[..comma].TrimEnd());
         var colon = WhoColon().Match(tag);
         return colon.Success

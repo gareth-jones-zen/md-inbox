@@ -262,4 +262,12 @@ public sealed class EditsTests : IDisposable
         Assert.Contains("tag has no date to move: [Action].", Run("redate", "mine", "1", "2026-11-20").Err);
         Assert.Contains("isn't a date", Run("redate", "waiting", "1", "Friday").Err);
     }
+
+    [Fact]
+    public void Redate_keeps_a_tags_date_as_it_was_written()
+    {
+        File.WriteAllText(Path.Combine(dir, "inbox", "waiting.md"), Waiting.Replace("19 Nov 2026", "2026-11-19", StringComparison.Ordinal) + "\n");
+        Assert.Equal(0, Run("redate", "waiting", "1", "27 Nov 2026").Code);
+        Assert.Contains("[Waiting: Ann Lee, 2026-11-27] The router features.", Read("waiting"));
+    }
 }

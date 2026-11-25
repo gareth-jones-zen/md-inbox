@@ -36,6 +36,7 @@ A folder of markdown files, one per list. In each:
   goes by that date (or, failing that, the item's first date).
 - **A dated action**, for `due`, is a line starting with a date (`- **Wed 25 Nov 2026: ...`), or an item whose tag ends
   in one: `[Action, 25 Nov 2026]`, or **`[Waiting: Ann Lee, 25 Nov 2026]`**, where the part after the colon says who.
+  A tag's date can be `25 Nov 2026`, `25 November 2026` or `2026-11-25` (and `redate` writes the new one the same way).
   For a tag that names someone, `due` adds who and how long the item has been open: `(Ann Lee; raised 12 Nov, 6 days
   ago)`. So a list of things you're waiting on, each tagged with who and when to chase, comes up on the day; moving the
   chase on is changing the tag's date.
