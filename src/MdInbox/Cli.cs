@@ -20,8 +20,8 @@ public sealed class CliHost
 }
 
 /// <summary>md-inbox: lists of items in markdown files. Exit codes: 0 done (also when git isn't installed or the folder
-/// isn't a repository: saved, nothing to commit into); 1 failed; 2 settings or arguments; 3 an add, close or redate saved in
-/// its list but not committed (don't run it again).</summary>
+/// isn't a repository: saved, nothing to commit into); 1 failed; 2 settings or arguments; 3 an add, close, reopen, redate or
+/// move saved in its list but not committed (don't run it again).</summary>
 public static class Cli
 {
     public const string Prog = "md-inbox";
@@ -29,7 +29,7 @@ public static class Cli
     public const string BackgroundExe = "md-inbox-background.exe";
 
     private const string Usage =
-        "usage: md-inbox [-h] [--version] [--config CONFIG] {config,list,show,due,add,close,redate,move,archive,autostart} ...";
+        "usage: md-inbox [-h] [--version] [--config CONFIG] {config,list,show,due,add,close,reopen,redate,move,archive,autostart} ...";
 
     // Explicit "\n" throughout (a raw literal would take the .cs file's line endings).
     public const string Help =
@@ -49,25 +49,28 @@ public static class Cli
         "        --section S                  the section (a few letters of it); else the tag's, from [tags]\n" +
         "        --date DATE                  the date it was raised (default today)\n" +
         "    md-inbox close LIST N --reason R move an item to the closed section: \"Closed (date): R.\" in front\n" +
+        "    md-inbox reopen LIST cN          put a closed item back as it was, at the top of a section (cN from list --closed)\n" +
+        "        --section S                  the section; else its tag's, from [tags]; else the list's first\n" +
+        "        --note T                     and add \"**25 Nov 2026: reopened.** T\" at the end of it\n" +
         "    md-inbox redate LIST N DATE      move the date in an item's tag (\"[Waiting: Ann, 20 Nov 2026]\")\n" +
         "        --note T                     and add \"**18 Nov: T.** Next: <date>.\" under it\n" +
         "    md-inbox move LIST N --section S move an item to the top of a section (--bottom: the end), word for word\n" +
         "        --to LIST                    in another list\n" +
         "        --note T                     and add \"**23 Nov 2026: moved to <section>.** T\" at the end of it\n" +
-        "      add, close, redate, move: --dry-run shows it and changes nothing; --no-commit skips [git]\n" +
+        "      add, close, reopen, redate, move: --dry-run shows it and changes nothing; --no-commit skips [git]\n" +
         "    md-inbox archive [--dry-run]     move closed items past keep_days to the archive, and commit them\n" +
         "    md-inbox autostart on            run the archive daily and at logon (off, restart, status)\n" +
         "    md-inbox config                  create the settings file (if missing) and say where it is\n\n" +
         "  LIST is a file's name without .md, or enough of it to be unique.\n\n" +
         "exit codes: 0 done (with [git] but no git, or a folder that isn't a repository: saved, not committed, said\n" +
-        "  once); 1 failed; 2 settings or arguments; 3 add, close, redate or move saved but the repository refused the commit:\n" +
-        "  don't run it again.\n\n" +
+        "  once); 1 failed; 2 settings or arguments; 3 add, close, reopen, redate or move saved but the repository refused the\n" +
+        "  commit: don't run it again.\n\n" +
         "options:\n" +
         "  -h, --help       show this help message and exit\n" +
         "  --version        show program's version number and exit\n" +
         "  --config CONFIG  settings file (default %APPDATA%\\md-inbox\\config.toml)\n";
 
-    private static readonly string[] Commands = ["config", "list", "show", "due", "add", "close", "redate", "move", "archive", "autostart"];
+    private static readonly string[] Commands = ["config", "list", "show", "due", "add", "close", "reopen", "redate", "move", "archive", "autostart"];
 
     public static string Version =>
         typeof(Cli).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "0.0.0";
@@ -117,6 +120,7 @@ public static class Cli
                 "due" => DueCommand(config, options, host),
                 "add" => AddCommand(config, options, host),
                 "close" => CloseCommand(config, options, host),
+                "reopen" => ReopenCommand(config, options, host),
                 "redate" => RedateCommand(config, options, host),
                 "move" => MoveCommand(config, options, host),
                 "archive" => ArchiveCommand(config, options, host),
@@ -238,10 +242,21 @@ public static class Cli
     private static int CloseCommand(Config config, Options options, CliHost host)
     {
         var list = Inbox.List(config, options.Args[0]);
-        var done = Inbox.Close(config, list, Number(options.Args[1]), options.Reason ?? throw new UsageException("Say why it's closed: --reason \"...\"."),
+        var number = Number(options.Args[1]);
+        var from = Inbox.OpenItem(list, number).Section;
+        var done = Inbox.Close(config, list, number, options.Reason ?? throw new UsageException("Say why it's closed: --reason \"...\"."),
             options.Raised ?? host.Today(), options.DryRun);
-        return Report(config, options, host, done, $"{(options.DryRun ? "Would close" : "Closed")} {list.Name} {options.Args[1]}",
+        // The section it came from, so a caller can reopen it there (reopen --section).
+        return Report(config, options, host, done, $"{(options.DryRun ? "Would close" : "Closed")} {list.Name} {options.Args[1]} (from {from})",
             $"Inbox: close in {done.List}: {Short(done)}");
+    }
+
+    private static int ReopenCommand(Config config, Options options, CliHost host)
+    {
+        var list = Inbox.List(config, options.Args[0]);
+        var done = Inbox.Reopen(config, list, options.Args[1], options.Section, options.Note, host.Today(), options.DryRun);
+        return Report(config, options, host, done, $"{(options.DryRun ? "Would reopen" : "Reopened")} {list.Name} {options.Args[1]} into {done.List} / {done.Section}",
+            $"Inbox: reopen in {done.List} / {done.Section}: {Short(done)}");
     }
 
     private static int RedateCommand(Config config, Options options, CliHost host)
@@ -302,7 +317,7 @@ public static class Cli
         return 0;
     }
 
-    /// <summary>The exit code for an add, close or redate saved in its list but not committed: don't run it again.</summary>
+    /// <summary>The exit code for an add, close, reopen, redate or move saved in its list but not committed: don't run it again.</summary>
     public const int SavedNotCommitted = 3;
 
     /// <summary>Logs what a commit did. git not set up here (Skipped) has already said so, once, and isn't a failure.</summary>
@@ -474,16 +489,16 @@ public static class Cli
                 case ("list" or "due", "--json"):
                     options.Json = true;
                     break;
-                case ("archive" or "add" or "close" or "redate" or "move", "--dry-run"):
+                case ("archive" or "add" or "close" or "reopen" or "redate" or "move", "--dry-run"):
                     options.DryRun = true;
                     break;
                 case ("archive", "--scheduled"):
                     options.Scheduled = true;
                     break;
-                case ("add" or "close" or "redate" or "move", "--no-commit"):
+                case ("add" or "close" or "reopen" or "redate" or "move", "--no-commit"):
                     options.NoCommit = true;
                     break;
-                case ("add" or "move", "--section"):
+                case ("add" or "move" or "reopen", "--section"):
                     options.Section = Value(name, ref i, arg);
                     break;
                 case ("add", "--file"):
@@ -492,7 +507,7 @@ public static class Cli
                 case ("close", "--reason"):
                     options.Reason = Value(name, ref i, arg);
                     break;
-                case ("redate" or "move", "--note"):
+                case ("redate" or "move" or "reopen", "--note"):
                     options.Note = Value(name, ref i, arg);
                     break;
                 case ("move", "--to"):
@@ -532,6 +547,7 @@ public static class Cli
             "show" => (2, 2, "list, number"),
             "add" => (0, 2, ""),
             "close" => (2, 2, "list, number"),
+            "reopen" => (2, 2, "list, ref"),
             "redate" => (3, 3, "list, number, date"),
             "move" => (2, 2, "list, number"),
             "autostart" => (1, 1, "action"),

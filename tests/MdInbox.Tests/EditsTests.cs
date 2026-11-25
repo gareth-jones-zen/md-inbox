@@ -168,7 +168,7 @@ public sealed class EditsTests : IDisposable
     {
         var (code, output, _) = Run("close", "people", "1", "--reason", "asked in her 18 Nov 1:1");
         Assert.Equal(0, code);
-        Assert.StartsWith("Closed people 1:\n\n- ✔ **Closed (2026-11-18): asked in her 18 Nov 1:1.** — **2026-11-06:** **[Ann 1:1] The NetBox query.**", output);
+        Assert.StartsWith("Closed people 1 (from Ann):\n\n- ✔ **Closed (2026-11-18): asked in her 18 Nov 1:1.** — **2026-11-06:** **[Ann 1:1] The NetBox query.**", output);
         var people = Read("people");
         Assert.Contains("## Ann\n\n- **2026-10-08:**", people);
         Assert.Contains("*Closed in the last two weeks.*\n\n- ✔ **Closed (2026-11-18): asked in her 18 Nov 1:1.** — **2026-11-06:** " +
@@ -187,6 +187,77 @@ public sealed class EditsTests : IDisposable
         Assert.Contains("there's no 9", Run("close", "mine", "9", "--reason", "x").Err);
         Assert.Contains("Say why", Run("close", "mine", "1").Err);
         Assert.Contains("isn't an item number", Run("close", "mine", "one", "--reason", "x").Err);
+    }
+
+    [Fact]
+    public void Reopen_undoes_a_close_word_for_word()
+    {
+        var before = Read("people");
+        Run("close", "people", "1", "--reason", "by mistake");
+        var (code, output, _) = Run("reopen", "people", "c1", "--section", "Ann");
+        Assert.Equal(0, code);
+        Assert.StartsWith("Reopened people c1 into people / Ann:\n\n- **2026-11-06:** **[Ann 1:1] The NetBox query.** A question.\n" +
+                          "  - **12 Nov: didn't come up.** Carry it.\n", output);
+        Assert.Equal(before, Read("people"));   // back where it was, and the closed copy gone
+    }
+
+    [Fact]
+    public void Reopen_goes_to_its_tags_section_and_an_emptied_closed_section_says_so()
+    {
+        var (code, output, _) = Run("reopen", "people", "c1");   // [Ann 1:1] is "people / Ann" in [tags]
+        Assert.Equal(0, code);
+        Assert.StartsWith("Reopened people c1 into people / Ann:", output);
+        var people = Read("people");
+        Assert.Contains("## Ann\n\n- **2026-11-06:** **[Ann 1:1] Ask how the move went.** Detail.\n\n- **2026-11-06:** **[Ann 1:1] The NetBox query.**", people);
+        Assert.EndsWith("## Recently closed\n\n*Closed in the last two weeks.*\n\n*None.*\n", people);
+        Assert.DoesNotContain("✔", people);
+
+        var json = Run("list", "people", "--json").Out;   // open again, numbered first
+        Assert.Contains("\"ref\": \"1\",\n          \"section\": \"Ann\",", json);
+        Assert.Contains("\"title\": \"Ask how the move went\"", json);
+        Assert.DoesNotContain("\"closed\": true", json);
+    }
+
+    [Fact]
+    public void Reopen_without_a_section_or_a_tag_for_this_list_goes_to_the_first_section()
+    {
+        File.WriteAllText(Path.Combine(dir, "inbox", "mine.md"), Mine + """
+
+
+            ## Recently closed
+
+            - ✔ **Closed (2026-11-13, 22:48): moot.** **2026-11-02:** **[Waiting: Bob Ray, 5 Nov 2026] A reply.** Hand-closed, no dash.
+              - **4 Nov: chased.**
+            - ✔ **Closed (2026-11-12): done.** — **2026-11-01:** **No tag at all.**
+
+            """);
+        var (code, _, _) = Run("reopen", "mine", "c1", "--note", "it matters again");   // [Waiting] is the waiting list's, not mine's
+        Assert.Equal(0, code);
+        Assert.Contains("## Actions\n\n- **2026-11-02:** **[Waiting: Bob Ray, 5 Nov 2026] A reply.** Hand-closed, no dash.\n" +
+                        "  - **4 Nov: chased.**\n  - **18 Nov 2026: reopened.** it matters again.\n- **2026-11-13:**", Read("mine"));   // "How to use" is skipped
+        Run("reopen", "mine", "c1", "--section", "some");
+        Assert.Contains("## Someday\n\n- **2026-11-01:** **No tag at all.**\n\n- **2026-09-01:**", Read("mine"));
+        Assert.EndsWith("## Recently closed\n\n*None.*\n", Read("mine"));
+    }
+
+    [Fact]
+    public void Reopen_refuses_what_it_cant_find_and_dry_runs_change_nothing()
+    {
+        Assert.Contains("'1' is an open item's number: reopen takes a closed item's ref", Run("reopen", "people", "1").Err);
+        Assert.Contains("there's no c4", Run("reopen", "people", "c4").Err);
+        Assert.Contains("isn't a closed item's ref", Run("reopen", "people", "cx").Err);
+        Assert.Contains("there's no c1", Run("reopen", "waiting", "c1").Err);   // no closed section at all
+        Assert.Contains("matches no open section", Run("reopen", "people", "c1", "--section", "Recently closed").Err);
+        Assert.Equal(2, Run("reopen", "people").Code);
+
+        File.WriteAllText(Path.Combine(dir, "inbox", "odd.md"), "# Odd\n\n## Things\n\n## Recently closed\n\n- ✔ Done, written by hand.\n");
+        Assert.Contains("can't say which part to keep", Run("reopen", "odd", "c1").Err);
+
+        var before = Read("people");
+        var dry = Run("reopen", "people", "c1", "--dry-run");
+        Assert.Equal(0, dry.Code);
+        Assert.StartsWith("Would reopen people c1 into people / Ann:\n\n- **2026-11-06:** **[Ann 1:1] Ask how the move went.** Detail.\n", dry.Out);
+        Assert.Equal(before, Read("people"));
     }
 
     [Fact]

@@ -122,6 +122,21 @@ public sealed class GitTests : IDisposable
     }
 
     [Fact]
+    public void A_reopen_commits_the_list_and_a_refused_commit_is_exit_3()
+    {
+        InitRepo();
+        var (code, _, _) = Run("reopen", "mine", "c1");
+        Assert.Equal(0, code);
+        Assert.Equal("?? md-inbox.log", Git("status", "--porcelain").Trim());
+        Assert.StartsWith("Inbox: reopen in mine / Actions: Old", Git("log", "-1", "--format=%s"));
+
+        Run("close", "mine", "1", "--reason", "again");
+        RefuseCommits();
+        Assert.Equal(Cli.SavedNotCommitted, Run("reopen", "mine", "c1").Code);
+        Assert.DoesNotContain("✔", File.ReadAllText(Path.Combine(dir, "inbox", "mine.md")));
+    }
+
+    [Fact]
     public void A_move_to_another_list_commits_both_files()
     {
         File.WriteAllText(Path.Combine(dir, "inbox", "later.md"), "# Later\n\n## Someday\n\n*None.*\n");

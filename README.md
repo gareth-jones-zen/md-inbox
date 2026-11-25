@@ -1,7 +1,7 @@
 # md-inbox
 
 Lists of items kept in markdown files, read and kept from the command line: what's open, what's due, adding,
-closing and re-dating items, and closed items moved to a monthly archive by themselves.
+closing, reopening and re-dating items, and closed items moved to a monthly archive by themselves.
 
 ```
 md-inbox list mine
@@ -82,13 +82,16 @@ md-inbox add [LIST] TEXT         add an item at the top of its section, dated to
     --date DATE                  the date it was raised (default today)
 md-inbox close LIST N --reason R move an item to the closed section, "Closed (date): R." in front
     --date DATE                  the date it closed (default today)
+md-inbox reopen LIST cN          put a closed item back as it was before it closed (cN from list --closed)
+    --section S                  the section (a few letters of its heading); else the tag's, from [tags]; else the first
+    --note T                     and add "**25 Nov 2026: reopened.** T" at the end of the item
 md-inbox redate LIST N DATE      move the date in an item's tag ("[Waiting: Ann Lee, 20 Nov 2026]")
     --note T                     and add "**18 Nov: T.** Next: Fri 20 Nov." at the end of the item
 md-inbox move LIST N --section S move an item, word for word, to the top of a section (a few letters of its heading)
     --to LIST                    in another list (default: the same one)
     --bottom                     to the end of the section instead (--top, the default)
     --note T                     and add "**23 Nov 2026: moved to <section>.** T" at the end of the item
-    add, close, redate, move: --dry-run shows the result and changes nothing; --no-commit skips [git]
+    add, close, reopen, redate, move: --dry-run shows the result and changes nothing; --no-commit skips [git]
 md-inbox archive [--dry-run]     move closed items past keep_days into the archive, and commit them
     --as-of DATE                 archive and due: as though today were DATE
 md-inbox autostart on            the archive as [schedule] says (daily 06:30 and at logon): off, restart, status
@@ -105,7 +108,7 @@ the top, across its sections, so they change when items are added or closed: tak
 | 0 | Done. Also when the settings have `[git]` but git isn't installed, or the folder isn't a git repository (or is a folder inside one rather than its top): the list is saved, nothing is committed, and it says so in one line |
 | 1 | Failed. For `archive`, also a commit the repository refused: the items are moved, and a rerun can't move them twice |
 | 2 | Settings or arguments |
-| 3 | `add`, `close`, `redate` or `move`: **saved in the list, but the repository refused the commit** (a hook, a lock, a conflict). Don't run it again, or the edit is made twice; commit the list's file by hand |
+| 3 | `add`, `close`, `reopen`, `redate` or `move`: **saved in the list, but the repository refused the commit** (a hook, a lock, a conflict). Don't run it again, or the edit is made twice; commit the list's file by hand |
 
 ## JSON, for another program: `list --json` and `due --json`
 
@@ -151,7 +154,7 @@ whatever the console's code page, and always valid JSON: no items is an empty `i
 | `name`, `file`, `path` | The list's name (as LIST takes it); its file relative to `[git]`'s `repo` (else to the folder holding the lists' folder), with `/`; and in full |
 | `sections` | The list's sections, in order, empty ones too (not the closed one, nor `skip_sections`): what `add` and `move` can take |
 | `n` | The item's number, as `list` gives it: `show`, `close`, `redate` and `move` take it. Like `list`'s, it changes as items are added and closed |
-| `ref` | What `show` takes: `n`, or `c` and `n` for a closed item (`--closed`) |
+| `ref` | What `show` takes: `n`, or `c` and `n` for a closed item (`--closed`), which is what `reopen` takes |
 | `date`, `tag`, `title` | As [above](#the-shape-it-expects); `null` when it has none |
 | `due` | The date `due` goes by: the earliest of a dated tag and the item's lines that start with a date (`null` if none, and for a closed item) |
 | `who` | Who the tag names (`[Waiting: Cleo Marsh, ...]`), else `null` |
@@ -186,7 +189,7 @@ lines), and
 }
 ```
 
-## Adding, closing, re-dating and moving
+## Adding, closing, reopening, re-dating and moving
 
 - **`add` writes the item in the lists' shape:** `[Tag] Headline. Detail` becomes
   `- **2026-11-18:** **[Tag] Headline.** Detail` (the headline is up to the first full stop, question or exclamation
@@ -198,6 +201,14 @@ lines), and
   stand-in (`*None.*`, `*Nothing open.*`) goes.
 - **`close`** moves the item, word for word, to the top of the closed section (made if the list has none), starting
   `✔ **Closed (date): reason.** — `. A section left with no items says `*None.*`.
+- **`close` says which section the item came from** (`Closed mine 3 (from Actions):`), so it can be reopened there.
+- **`reopen`** undoes a close: it takes the item out of the closed section, drops the `✔ **Closed (date): reason.** — `
+  in front (or only a space after the bold, as some items closed by hand have it), and puts the rest back, sub-bullets
+  and all, word for word, at the top of a section: `--section`, else the section `[tags]` gives its tag *in this list*,
+  else the list's first section. It adds nothing unless asked, so an undone close leaves no trace; `--note` adds a
+  dated line saying it was reopened and why. A closed section left empty says `*None.*`. It works on the items in
+  `Recently closed` only (the refs `list --closed` gives): one already in the archive is copied back by hand, or added
+  again. An item whose first line doesn't start with the `Closed` bold is refused, rather than guessed at.
 - **`redate`** moves the date in the item's first tag, and with `--note` adds a dated line at the end of the item:
   a chase, recorded in the item itself.
 - **`move`** takes an open item, every line of it, to another section of the same list or (with `--to`) another list:
@@ -208,6 +219,28 @@ lines), and
   reads, logs it, and with `[git]` commits that list's file (and only that; a `move` between lists commits both).
 - **Line endings are kept:** a list with CRLF line endings stays CRLF. If the repository refuses the commit,
   the edit is still saved and it exits 3: don't run it again.
+
+For example, closing an item by mistake and putting it back where it was:
+
+```
+md-inbox close mine 2 --reason "Sent"
+Closed mine 2 (from Actions):
+
+- ✔ **Closed (2026-11-25): Sent.** — **2026-11-13:** **[Action] Speak to IS about sharing the contacts sheet.**
+
+md-inbox list mine --closed
+mine
+    c1. 2026-11-25  [Action] Speak to IS about sharing the contacts sheet
+
+md-inbox reopen mine c1 --section Actions
+Reopened mine c1 into mine / Actions:
+
+- **2026-11-13:** **[Action] Speak to IS about sharing the contacts sheet.**
+```
+
+A program undoing a close (a web page over the lists, say) has the item's `section` from `list --json` before it
+closes it, finds the closed copy in `list --closed --json` (its `ref`; it's `c1` straight after the close, as `close`
+puts it at the top) and passes both to `reopen`.
 
 ## The archive
 

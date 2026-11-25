@@ -3,7 +3,7 @@ using System.Text.RegularExpressions;
 
 namespace MdInbox;
 
-/// <summary>Adding, closing and re-dating items: each re-reads the list after every change, so it never works from
+/// <summary>Adding, closing, reopening, moving and re-dating items: each re-reads the list after every change, so it never works from
 /// stale line numbers, and writes the file once.</summary>
 public static partial class Inbox
 {
@@ -67,17 +67,7 @@ public static partial class Inbox
     /// else the list's only section. Anything less certain is refused, with the choices.</summary>
     public static (InboxList List, string Section) Place(Config config, string? listName, string? section, string? tag)
     {
-        (string List, string? Section)? mapped = null;
-        if (tag is not null)
-        {
-            var parts = TagParts.Of(tag);
-            foreach (var key in new[] { tag, parts.ToString(), parts.Name })
-                if (config.Tags.TryGetValue(key, out var found))
-                {
-                    mapped = found;
-                    break;
-                }
-        }
+        var mapped = Mapped(config, tag);
         var list = listName is not null ? List(config, listName)
             : mapped is { } m ? List(config, m.List)
             : throw new UsageException(tag is null
@@ -102,6 +92,19 @@ public static partial class Inbox
         return list.Sections.Count == 1 ? (list, list.Sections[0])
             : list.Sections.Count == 0 ? throw new UsageException($"{list.Name} has no sections to add to.")
             : throw new UsageException($"Which section? Use --section. {Choices()}.");
+    }
+
+    /// <summary>Where the settings' [tags] put a tag: looked up by the whole tag, then without its date, then by its
+    /// name. Null when it has no tag, or the tag isn't there.</summary>
+    private static (string List, string? Section)? Mapped(Config config, string? tag)
+    {
+        if (tag is null)
+            return null;
+        var parts = TagParts.Of(tag);
+        foreach (var key in new[] { tag, parts.ToString(), parts.Name })
+            if (config.Tags.TryGetValue(key, out var found))
+                return found;
+        return null;
     }
 
     /// <summary>Puts item lines at the top of a section (an empty section loses its "*None.*"), and writes the file
@@ -188,8 +191,8 @@ public static partial class Inbox
         return new Edited(list.Path, list.Name, config.ClosedHeading, closed);
     }
 
-    /// <summary>The list's lines without an item (and the blank lines after it). A section left with no open items says
-    /// "*None.*".</summary>
+    /// <summary>The list's lines without an item (and the blank lines after it). A section left with no items says
+    /// "*None.*" (the closed section too, as the archive leaves it).</summary>
     private static List<string> Remove(Config config, InboxList list, Item item)
     {
         var lines = list.Lines.ToList();
@@ -198,7 +201,7 @@ public static partial class Inbox
             stop++;
         lines.RemoveRange(item.Start, stop - item.Start);
         var after = Parse(list.Path, lines, config);
-        if (!after.Open.Any(i => i.Section == item.Section))
+        if (!(item.Closed ? after.Closed : after.Open).Any(i => i.Section == item.Section))
         {
             var (heading, end) = Bounds(lines, item.Section);
             if (!lines.Skip(heading + 1).Take(end - heading - 1).Any(l => Placeholder().IsMatch(l.Trim())))
@@ -223,6 +226,81 @@ public static partial class Inbox
         var spaced = items.Count == 1 || Enumerable.Range(items[0].End, items[1].Start - items[0].End).Any(n => lines[n].Trim().Length == 0);
         lines.InsertRange(items[^1].End, spaced ? ["", .. item] : item);
         return lines;
+    }
+
+    // ---- reopen ---------------------------------------------------------------------------------------------------
+
+    /// <summary>The "✔ **Closed (date): what happened.**" in front of a closed item's original first line, and the
+    /// " — " after it (or only a space, as some hand-closed items have it).</summary>
+    [GeneratedRegex(@"^✔\s*\*\*Closed\b(?:(?!\*\*).)*\*\*(?:\s+[—–]\s+|\s+)", RegexOptions.CultureInvariant)]
+    private static partial Regex ClosedHead();
+
+    /// <summary>A closed item by its ref in `list --closed` ("c2").</summary>
+    public static Item ClosedItem(InboxList list, string reference)
+    {
+        if (!reference.StartsWith('c'))
+            throw new UsageException(int.TryParse(reference, NumberStyles.None, CultureInfo.InvariantCulture, out _)
+                ? $"'{reference}' is an open item's number: reopen takes a closed item's ref, as `list --closed` gives it (c1, c2...)."
+                : $"'{reference}' isn't a closed item's ref (as `list --closed` gives them: c1, c2...).");
+        if (!int.TryParse(reference[1..], NumberStyles.None, CultureInfo.InvariantCulture, out var number))
+            throw new UsageException($"'{reference}' isn't a closed item's ref (as `list --closed` gives them: c1, c2...).");
+        return number >= 1 && number <= list.Closed.Count ? list.Closed[number - 1]
+            : throw new UsageException($"{list.Name} has {list.Closed.Count} closed item(s) waiting for the archive: there's no {reference}.");
+    }
+
+    /// <summary>Puts a closed item back as an open one: out of the closed section, without its "✔ **Closed (date):
+    /// ...** — ", every other line word for word, at the top of a section: the one given, else the one its tag's [tags]
+    /// entry names in this list, else the list's first. With a note, a dated line at the end says so: "**25 Nov 2026:
+    /// reopened.** note". A closed section left with no items says "*None.*".</summary>
+    public static Edited Reopen(Config config, InboxList list, string reference, string? section, string? note, DateOnly today, bool dryRun)
+    {
+        var item = ClosedItem(list, reference);
+        var first = item.Lines[0].TrimStart()[2..];
+        var head = ClosedHead().Match(first);
+        if (!head.Success || first[head.Length..].Trim().Length == 0)
+            throw new UsageException($"{list.Name} {reference} doesn't start \"✔ **Closed (date): ...** — \" and then the item, so it can't say which part to keep.");
+        var reopened = new List<string> { "- " + first[head.Length..].TrimStart() };
+        reopened.AddRange(item.Lines.Skip(1));
+        if (!string.IsNullOrWhiteSpace(note))
+        {
+            note = note.Trim();
+            if (!".?!".Contains(note[^1], StringComparison.Ordinal))
+                note += ".";
+            reopened.Add($"  - **{today.ToString("d MMM yyyy", CultureInfo.InvariantCulture)}: reopened.** {note}");
+        }
+
+        var into = section is not null ? ReopenSection(list, section)
+            : Mapped(config, TagOf(reopened)) is { Section: { } mapped } m && IsList(config, m.List, list)
+              && list.Sections.FirstOrDefault(s => s.Equals(mapped, StringComparison.OrdinalIgnoreCase)) is { } found ? found
+            : list.Sections.Count > 0 ? list.Sections[0]
+            : throw new UsageException($"{list.Name} has no open sections to reopen it into.");
+        var lines = Insert(Parse(list.Path, Remove(config, list, item), config), into, reopened, config);
+        if (!dryRun)
+            Write(list.Path, lines);
+        return new Edited(list.Path, list.Name, into, reopened);
+    }
+
+    /// <summary>Whether a list name (as [tags] gives it) is this list; false for one that isn't there at all.</summary>
+    private static bool IsList(Config config, string name, InboxList list)
+    {
+        try
+        {
+            return string.Equals(Path.GetFullPath(List(config, name).Path), Path.GetFullPath(list.Path), StringComparison.OrdinalIgnoreCase);
+        }
+        catch (UsageException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>--section for reopen: a few letters of one of the list's open sections (never the closed one).</summary>
+    private static string ReopenSection(InboxList list, string section)
+    {
+        var exact = list.Sections.FirstOrDefault(s => s.Equals(section, StringComparison.OrdinalIgnoreCase));
+        var some = list.Sections.Where(s => s.Contains(section, StringComparison.OrdinalIgnoreCase)).ToList();
+        return exact ?? (some.Count == 1 ? some[0]
+            : throw new UsageException($"--section '{section}' matches {(some.Count == 0 ? "no open section" : "more than one section")}. " +
+                                       $"{list.Name}'s sections: {string.Join("; ", list.Sections)}."));
     }
 
     // ---- move -----------------------------------------------------------------------------------------------------
