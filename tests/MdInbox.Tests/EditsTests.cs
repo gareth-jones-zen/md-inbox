@@ -244,7 +244,9 @@ public sealed class EditsTests : IDisposable
     [InlineData("✔ **Closed (2026-11-12): done.** — **2026-11-01:** **[Action] A.** Detail.", "**2026-11-01:** **[Action] A.** Detail.")]
     [InlineData("✔ **Closed (2026-11-12): Ann did **this** herself.** — **2026-11-01:** **A.**", "**2026-11-01:** **A.**")]   // bold in the reason
     [InlineData("✔ **Closed (2026-11-13, 22:48): moot.** **2026-11-02:** **A.** Then **B.** — more.", "**2026-11-02:** **A.** Then **B.** — more.")]   // no dash
+    [InlineData("✔ **Closed (2026-11-12): asked.** He agreed — **2026-11-01:** **[Action] A.** Detail.", "**2026-11-01:** **[Action] A.** Detail.")]   // more said after the bold
     [InlineData("✔ **Closed (2026-11-12): done.** — Undated, plain.", "Undated, plain.")]
+    [InlineData("✔ **Closed (2026-11-12): done.** Undated, no dash.", "Undated, no dash.")]
     [InlineData("✔ Done, written by hand.", null)]
     [InlineData("✔ **Closed (2026-11-12): done.** — ", null)]
     public void A_closed_items_original_first_line_is_what_follows_its_closed_bold(string first, string? expected) =>

@@ -240,15 +240,21 @@ public static partial class Inbox
     [GeneratedRegex(@"^✔\s*\*\*Closed\b(?:(?!\*\*).)*\*\*\s+(?![—–])", RegexOptions.CultureInvariant)]
     private static partial Regex ClosedHeadPlain();
 
+    /// <summary>Up to the first " — " before a bold date, as items closed by hand with more said after the bold have it:
+    /// "✔ **Closed (date):** asked, and he agreed — **2026-11-02:** ..." (the rule Item uses to find a closed item's
+    /// own first line).</summary>
+    [GeneratedRegex(@"^✔.*?\s[—–]\s(?=\*\*\d{4}-\d{2}-\d{2})", RegexOptions.CultureInvariant)]
+    private static partial Regex ClosedHeadToDate();
+
     [GeneratedRegex(@"^\*\*\d{4}-\d{2}-\d{2}", RegexOptions.CultureInvariant)]
     private static partial Regex DatedStart();
 
-    /// <summary>A closed item's original first line: what follows its "Closed" bold. Of the two ways it can be written,
-    /// the one that leaves an item starting with its bold date, as the lists' items do; else the one with the dash; else
-    /// null (nothing to go by).</summary>
+    /// <summary>A closed item's original first line: what follows its "Closed" bold. Of the ways it can be written, the
+    /// one that leaves an item starting with its bold date, as the lists' items do; else the one with the dash; else
+    /// what follows the bold; else null (nothing to go by).</summary>
     internal static string? Original(string first)
     {
-        var rests = new[] { ClosedHeadDash().Match(first), ClosedHeadPlain().Match(first) }
+        var rests = new[] { ClosedHeadDash().Match(first), ClosedHeadToDate().Match(first), ClosedHeadPlain().Match(first) }
             .Where(m => m.Success).Select(m => first[m.Length..].TrimStart()).Where(r => r.Length > 0).ToList();
         return rests.FirstOrDefault(r => DatedStart().IsMatch(r)) ?? rests.FirstOrDefault();
     }
