@@ -23,6 +23,36 @@ public sealed partial record Item(string List, string Section, int Number, int S
         }
     }
 
+    /// <summary>The first line as written, without its "- " (a closed item's with its "✔ **Closed ...** — " in front).</summary>
+    public string FirstLine => Lines[0].TrimStart()[2..];
+
+    /// <summary>The sub-bullets under it ("- ", "* " or "+ "), each without its bullet: the shallowest ones start a
+    /// sub-item, and anything under one (deeper bullets, continued lines) joins it on a new line, indented as it is
+    /// under that sub-bullet's text. Blank lines, and text before the first sub-bullet, aren't in any.</summary>
+    public IReadOnlyList<string> SubItems
+    {
+        get
+        {
+            var subs = new List<StringBuilder>();
+            int? indent = null;
+            foreach (var line in Lines.Skip(1))
+            {
+                var body = line.TrimStart();
+                if (body.Length == 0)
+                    continue;
+                var lead = line.Length - body.Length;
+                if (body is ['-' or '*' or '+', ' ', ..] && (indent is null || lead <= indent))
+                {
+                    indent = lead;
+                    subs.Add(new StringBuilder(body[2..].Trim()));
+                }
+                else if (subs.Count > 0)
+                    subs[^1].Append('\n').Append(line[Math.Min(lead, indent!.Value + 2)..].TrimEnd());
+            }
+            return subs.Select(s => s.ToString()).ToList();
+        }
+    }
+
     /// <summary>The first yyyy-mm-dd on its (original) first line: when it was raised. For a closed item, see ClosedOn.</summary>
     public DateOnly? Date => FirstDate(Head);
 
@@ -111,8 +141,9 @@ public sealed partial record TagParts(string Name, string? Who, DateOnly? When)
 }
 
 /// <summary>A dated action that's due: an item line starting with a date, such as "- **Wed 25 Nov 2026: ...", or
-/// an item whose tag carries one, "[Action, 25 Nov 2026]" or "[Waiting: Ann Lee, 25 Nov 2026]".</summary>
-public sealed record Due(DateOnly When, Item Item, string Line);
+/// an item whose tag carries one, "[Action, 25 Nov 2026]" or "[Waiting: Ann Lee, 25 Nov 2026]".
+/// Offset is the dated line's place in the item (0 for its first line).</summary>
+public sealed record Due(DateOnly When, Item Item, string Line, int Offset = 0);
 
 /// <summary>One list: a markdown file in the inbox folder, its "## " sections, and the items in them.</summary>
 public sealed class InboxList
@@ -202,21 +233,28 @@ public static partial class Inbox
     /// + ahead days, soonest first. A line counts once, whichever way it's dated.</summary>
     public static List<Due> DueItems(IEnumerable<InboxList> lists, DateOnly today, int ahead)
     {
-        var found = new List<Due>();
-        foreach (var item in lists.SelectMany(l => l.Open))
-        {
-            for (var n = 0; n < item.Lines.Count; n++)
-            {
-                var line = item.Lines[n];
-                var when = Dated().Match(line) is { Success: true } m ? LongDate(m.Groups[1].Value) : null;
-                if (when is null && n == 0)
-                    when = item.Parts?.When;
-                if (when is { } w && w <= today.AddDays(ahead))
-                    found.Add(new Due(w, item, line.Trim()));
-            }
-        }
+        var found = lists.SelectMany(l => l.Open).SelectMany(DatedLines).Where(d => d.When <= today.AddDays(ahead));
         return found.OrderBy(d => d.When).ThenBy(d => d.Item.List).ToList();
     }
+
+    /// <summary>Every dated line of an item, whatever the date (what due goes by): a line starting with a date, or
+    /// for the first line, a dated tag.</summary>
+    public static IEnumerable<Due> DatedLines(Item item)
+    {
+        for (var n = 0; n < item.Lines.Count; n++)
+        {
+            var line = item.Lines[n];
+            var when = Dated().Match(line) is { Success: true } m ? LongDate(m.Groups[1].Value) : null;
+            if (when is null && n == 0)
+                when = item.Parts?.When;
+            if (when is { } w)
+                yield return new Due(w, item, line.Trim(), n);
+        }
+    }
+
+    /// <summary>The date due would act on for an open item: its earliest dated line, or null if it has none.</summary>
+    public static DateOnly? DueOn(Item item) =>
+        item.Closed ? null : DatedLines(item).Select(d => (DateOnly?)d.When).Min();
 
     // ---- archive --------------------------------------------------------------------------------------------------
 

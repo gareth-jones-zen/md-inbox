@@ -71,8 +71,10 @@ md-inbox list [LIST...]          the open items, numbered, under their sections 
     --section S                  only sections whose heading contains S
     --tag T                      only items whose tag contains T
     --closed                     the closed items waiting for the archive (numbered c1, c2...)
+    --json                       as JSON, for another program (below)
 md-inbox show LIST N             an item in full (N from list; cN for a closed one)
 md-inbox due [--days N]          dated actions due within N days (default: due_ahead_days)
+    --json                       as JSON, for another program (below)
 md-inbox add [LIST] TEXT         add an item at the top of its section, dated today: "[Tag] Headline. Detail"
     --file F                     the item from a markdown file instead (later lines go under it)
     --section S                  the section (a few letters of its heading); else the tag's, from [tags]
@@ -103,6 +105,85 @@ the top, across its sections, so they change when items are added or closed: tak
 | 1 | Failed. For `archive`, also a commit the repository refused: the items are moved, and a rerun can't move them twice |
 | 2 | Settings or arguments |
 | 3 | `add`, `close`, `redate` or `move`: **saved in the list, but the repository refused the commit** (a hook, a lock, a conflict). Don't run it again, or the edit is made twice; commit the list's file by hand |
+
+## JSON, for another program: `list --json` and `due --json`
+
+The same items the plain commands print, for a program to read (a web page over the lists, say). Output is UTF-8,
+whatever the console's code page, and always valid JSON: no items is an empty `items` array.
+
+**`list --json [LIST...]`** takes `--section`, `--tag` and `--closed` as `list` does, and gives every list asked for
+(every list, if none is named), even one with nothing in it:
+
+```json
+{
+  "lists": [
+    {
+      "name": "waiting",
+      "file": "inbox/waiting.md",
+      "path": "C:\\Users\\ann\\notes\\inbox\\waiting.md",
+      "sections": ["Waiting"],
+      "items": [
+        {
+          "n": 1,
+          "ref": "1",
+          "section": "Waiting",
+          "date": "2026-11-20",
+          "tag": "Waiting: Cleo Marsh, 24 Nov 2026",
+          "title": "The café floor plan",
+          "due": "2026-11-24",
+          "who": "Cleo Marsh",
+          "closed": false,
+          "closedOn": null,
+          "text": "**2026-11-20:** **[Waiting: Cleo Marsh, 24 Nov 2026] The café floor plan.** Asked on Teams.",
+          "subitems": ["**22 Nov: chased.** Next: Tue 24 Nov."],
+          "markdown": "- **2026-11-20:** **[Waiting: Cleo Marsh, 24 Nov 2026] The café floor plan.** Asked on Teams.\n  - **22 Nov: chased.** Next: Tue 24 Nov.",
+          "line": 9
+        }
+      ]
+    }
+  ]
+}
+```
+
+| Field | Is |
+|---|---|
+| `name`, `file`, `path` | The list's name (as LIST takes it); its file relative to `[git]`'s `repo` (else to the folder holding the lists' folder), with `/`; and in full |
+| `sections` | The list's sections, in order, empty ones too (not the closed one, nor `skip_sections`): what `add` and `move` can take |
+| `n` | The item's number, as `list` gives it: `show`, `close`, `redate` and `move` take it. Like `list`'s, it changes as items are added and closed |
+| `ref` | What `show` takes: `n`, or `c` and `n` for a closed item (`--closed`) |
+| `date`, `tag`, `title` | As [above](#the-shape-it-expects); `null` when it has none |
+| `due` | The date `due` goes by: the earliest of a dated tag and the item's lines that start with a date (`null` if none, and for a closed item) |
+| `who` | Who the tag names (`[Waiting: Cleo Marsh, ...]`), else `null` |
+| `closed`, `closedOn` | Whether it's a closed item, and the date it closed (else `null`) |
+| `text` | Its first line, markdown, without the `- ` |
+| `subitems` | Each sub-bullet's text, without its bullet. Anything under a sub-bullet (a deeper bullet, a continued line) joins it on a new line; text under the item before its first sub-bullet is only in `markdown` |
+| `markdown` | The whole item, as it is in the file (with `\n` line endings) |
+| `line` | The line its first line is on in the file, from 1 |
+
+**`due --json [--days N]`** gives `today`, the window in `days`, and one entry in `items` for each line `due` prints,
+soonest first: `list`, the item's fields as above (with `due` the date of *this* line, as an item can be due on two
+lines), and
+
+| Field | Is |
+|---|---|
+| `overdue`, `dueToday` | Whether this date is before today, or today |
+| `raised` | When an item whose tag names someone was raised (its `date`), as `due` says it; else `null` |
+| `dueText`, `dueLine` | The dated line (without its `- `) and its line in the file, from 1: the item's first line, or one under it |
+
+```json
+{
+  "today": "2026-11-25",
+  "days": 2,
+  "items": [
+    { "list": "waiting", "n": 1, "ref": "1", "section": "Waiting", "date": "2026-11-20",
+      "tag": "Waiting: Cleo Marsh, 24 Nov 2026", "title": "The café floor plan", "due": "2026-11-24",
+      "who": "Cleo Marsh", "closed": false, "closedOn": null, "text": "...", "subitems": ["..."], "markdown": "...",
+      "line": 9, "overdue": true, "dueToday": false, "raised": "2026-11-20",
+      "dueText": "**2026-11-20:** **[Waiting: Cleo Marsh, 24 Nov 2026] The café floor plan.** Asked on Teams.",
+      "dueLine": 9 }
+  ]
+}
+```
 
 ## Adding, closing, re-dating and moving
 

@@ -40,8 +40,10 @@ public static class Cli
         "        --section S                  only sections whose heading contains S\n" +
         "        --tag T                      only items whose [tag] contains T\n" +
         "        --closed                     the closed items waiting for the archive instead\n" +
+        "        --json                       as JSON, for another program (numbered the same way)\n" +
         "    md-inbox show LIST N             an item in full (N from `list`; cN for a closed one)\n" +
         "    md-inbox due [--days N]          dated items due within N days (default: the settings' due_ahead_days)\n" +
+        "        --json                       as JSON, for another program\n" +
         "    md-inbox add [LIST] TEXT         add an item at the top of its section, dated today: \"[Tag] Headline. Detail\"\n" +
         "        --file F                     the item from a markdown file instead (later lines go under it)\n" +
         "        --section S                  the section (a few letters of it); else the tag's, from [tags]\n" +
@@ -75,7 +77,7 @@ public static class Cli
         public string? Config, Section, Tag, File, Reason, Note, To;
         public string Command = "";
         public List<string> Args = [];
-        public bool Closed, DryRun, NoCommit, Scheduled, Bottom;
+        public bool Closed, DryRun, NoCommit, Scheduled, Bottom, Json;
         public int? Days;
         public DateOnly? AsOf, Raised;
     }
@@ -136,13 +138,19 @@ public static class Cli
     private static int List(Config config, Options options, CliHost host)
     {
         var lists = options.Args.Count == 0 ? Inbox.Lists(config) : options.Args.Select(a => Inbox.List(config, a)).ToList();
-        var text = new StringBuilder();
-        foreach (var list in lists)
+        var picked = lists.Select(list => (List: list, Items: (IReadOnlyList<Item>)(options.Closed ? list.Closed : list.Open)
+            .Where(i => options.Section is null || i.Section.Contains(options.Section, StringComparison.OrdinalIgnoreCase))
+            .Where(i => options.Tag is null || (i.Tag?.Contains(options.Tag, StringComparison.OrdinalIgnoreCase) ?? false))
+            .ToList())).ToList();
+        if (options.Json)
         {
-            var items = (options.Closed ? list.Closed : list.Open)
-                .Where(i => options.Section is null || i.Section.Contains(options.Section, StringComparison.OrdinalIgnoreCase))
-                .Where(i => options.Tag is null || (i.Tag?.Contains(options.Tag, StringComparison.OrdinalIgnoreCase) ?? false))
-                .ToList();
+            // Every list asked for, even one with nothing in it, so a reader sees them all.
+            host.Out.Write(Json.Lists(config, picked));
+            return 0;
+        }
+        var text = new StringBuilder();
+        foreach (var (list, items) in picked)
+        {
             if (items.Count == 0 && options.Args.Count == 0)
                 continue;
             text.Append(text.Length > 0 ? "\n" : "").Append(list.Name).Append(items.Count == 0 ? ": nothing\n" : "\n");
@@ -180,7 +188,13 @@ public static class Cli
     private static int DueCommand(Config config, Options options, CliHost host)
     {
         var today = options.AsOf ?? host.Today();
-        var due = Inbox.DueItems(Inbox.Lists(config), today, options.Days ?? config.DueAheadDays);
+        var ahead = options.Days ?? config.DueAheadDays;
+        var due = Inbox.DueItems(Inbox.Lists(config), today, ahead);
+        if (options.Json)
+        {
+            host.Out.Write(Json.Due(today, ahead, due));
+            return 0;
+        }
         if (due.Count == 0)
             host.Out.WriteLine("Nothing due.");
         foreach (var d in due)
@@ -456,6 +470,9 @@ public static class Cli
                     break;
                 case ("list", "--closed"):
                     options.Closed = true;
+                    break;
+                case ("list" or "due", "--json"):
+                    options.Json = true;
                     break;
                 case ("archive" or "add" or "close" or "redate" or "move", "--dry-run"):
                     options.DryRun = true;
