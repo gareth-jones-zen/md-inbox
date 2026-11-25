@@ -230,10 +230,28 @@ public static partial class Inbox
 
     // ---- reopen ---------------------------------------------------------------------------------------------------
 
-    /// <summary>The "✔ **Closed (date): what happened.**" in front of a closed item's original first line, and the
-    /// " — " after it (or only a space, as some hand-closed items have it).</summary>
-    [GeneratedRegex(@"^✔\s*\*\*Closed\b(?:(?!\*\*).)*\*\*(?:\s+[—–]\s+|\s+)", RegexOptions.CultureInvariant)]
-    private static partial Regex ClosedHead();
+    /// <summary>The "✔ **Closed (date): what happened.** — " in front of a closed item's original first line, as `close`
+    /// writes it: up to the first "** — " (so the reason can hold bold of its own).</summary>
+    [GeneratedRegex(@"^✔\s*\*\*Closed\b.*?\*\*\s+[—–]\s+", RegexOptions.CultureInvariant)]
+    private static partial Regex ClosedHeadDash();
+
+    /// <summary>The same with only a space after the bold, as some items closed by hand have it: "✔ **Closed (date):
+    /// what happened.** **2026-11-02:** ..." (the reason without bold of its own).</summary>
+    [GeneratedRegex(@"^✔\s*\*\*Closed\b(?:(?!\*\*).)*\*\*\s+(?![—–])", RegexOptions.CultureInvariant)]
+    private static partial Regex ClosedHeadPlain();
+
+    [GeneratedRegex(@"^\*\*\d{4}-\d{2}-\d{2}", RegexOptions.CultureInvariant)]
+    private static partial Regex DatedStart();
+
+    /// <summary>A closed item's original first line: what follows its "Closed" bold. Of the two ways it can be written,
+    /// the one that leaves an item starting with its bold date, as the lists' items do; else the one with the dash; else
+    /// null (nothing to go by).</summary>
+    internal static string? Original(string first)
+    {
+        var rests = new[] { ClosedHeadDash().Match(first), ClosedHeadPlain().Match(first) }
+            .Where(m => m.Success).Select(m => first[m.Length..].TrimStart()).Where(r => r.Length > 0).ToList();
+        return rests.FirstOrDefault(r => DatedStart().IsMatch(r)) ?? rests.FirstOrDefault();
+    }
 
     /// <summary>A closed item by its ref in `list --closed` ("c2").</summary>
     public static Item ClosedItem(InboxList list, string reference)
@@ -256,10 +274,9 @@ public static partial class Inbox
     {
         var item = ClosedItem(list, reference);
         var first = item.Lines[0].TrimStart()[2..];
-        var head = ClosedHead().Match(first);
-        if (!head.Success || first[head.Length..].Trim().Length == 0)
-            throw new UsageException($"{list.Name} {reference} doesn't start \"✔ **Closed (date): ...** — \" and then the item, so it can't say which part to keep.");
-        var reopened = new List<string> { "- " + first[head.Length..].TrimStart() };
+        var original = Original(first)
+                       ?? throw new UsageException($"{list.Name} {reference} doesn't start \"✔ **Closed (date): ...** — \" and then the item, so it can't say which part to keep.");
+        var reopened = new List<string> { "- " + original };
         reopened.AddRange(item.Lines.Skip(1));
         if (!string.IsNullOrWhiteSpace(note))
         {
